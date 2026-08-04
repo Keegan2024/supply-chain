@@ -32,9 +32,9 @@ const DB = {
       // District Manager
       {
         id: 'usr_dm_01',
-        name: 'Daniel Mwale',
-        email: 'daniel.mwale@supplync.org',
-        password: 'District@2024',
+        name: 'Matilda Sakala',
+        email: 'Matildah@gmail.com',
+        password: 'Matilda@2026',
         role: 'district',
         status: 'active',
         level: 'district',
@@ -74,15 +74,15 @@ const DB = {
       {
         id: 'usr_fs_01',
         name: 'Alice Phiri',
-        email: 'alice.phiri@supplync.org',
-        password: 'Facility@2024',
+        email: 'Sakala@gmail.com',
+        password: 'Sakala@2026',
         role: 'facility',
         status: 'active',
         level: 'facility',
         facilityId: 'fac_01',
         districtId: 'dist_01',
         createdAt: '2024-01-10T08:00:00Z',
-        phone: '+260 97 777 8888',
+        phone: '+260 953 504 539',
         avatar: 'AP'
       },
       // Pending signup
@@ -103,46 +103,46 @@ const DB = {
     ];
 
     const provinces = [
-      { id: 'prov_01', name: 'Lusaka Province', code: 'LSK', managerId: 'usr_pm_01', createdAt: '2024-01-01' },
+      { id: 'prov_01', name: 'Luapula Province', code: 'LSK', managerId: 'usr_pm_01', createdAt: '2024-01-01' },
       { id: 'prov_02', name: 'Copperbelt Province', code: 'CB', managerId: null, createdAt: '2024-01-01' }
     ];
 
     const districts = [
-      { id: 'dist_01', name: 'Lusaka District', code: 'LD', provinceId: 'prov_01', managerId: 'usr_dm_01', createdAt: '2024-01-01' },
-      { id: 'dist_02', name: 'Kafue District', code: 'KF', provinceId: 'prov_01', managerId: null, createdAt: '2024-01-01' }
+      { id: 'dist_01', name: 'Nchelenge District', code: 'LD', provinceId: 'prov_01', managerId: 'usr_dm_01', createdAt: '2024-01-01' },
+      { id: 'dist_02', name: 'Kawambwa District', code: 'KF', provinceId: 'prov_01', managerId: null, createdAt: '2024-01-01' }
     ];
 
     const facilities = [
       {
         id: 'fac_01',
-        name: 'Matero Level 1 Hospital',
-        code: 'MLH-01',
-        type: 'Hospital',
+        name: 'Kabuta Rural Heath Center',
+        code: 'KRHC-01',
+        type: 'Health Center',
         districtId: 'dist_01',
         provinceId: 'prov_01',
-        address: 'Matero, Lusaka',
+        address: 'Kabuta, ',
         phone: '+260 211 111 001',
         createdAt: '2024-01-05'
       },
       {
         id: 'fac_02',
-        name: 'Kabwata Health Centre',
-        code: 'KHC-02',
+        name: 'Nchelenge Health Centre',
+        code: 'NCH-02',
         type: 'Health Centre',
         districtId: 'dist_01',
         provinceId: 'prov_01',
-        address: 'Kabwata, Lusaka',
+        address: 'Nchelenge, Luapula',
         phone: '+260 211 111 002',
         createdAt: '2024-01-05'
       },
       {
         id: 'fac_03',
-        name: 'Chilenje Clinic',
-        code: 'CC-03',
+        name: 'St. Pauls hHospital',
+        code: 'St-03',
         type: 'Clinic',
         districtId: 'dist_01',
         provinceId: 'prov_01',
-        address: 'Chilenje, Lusaka',
+        address: 'Nchelenge district, Luapula',
         phone: '+260 211 111 003',
         createdAt: '2024-01-08'
       }
