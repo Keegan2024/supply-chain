@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign In — SupplyNC</title>
+  <link rel="stylesheet" href="assets/css/style.css">
+  <style>
+    body { background: var(--blue-900); display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
+    .login-wrap { width: 100%; max-width: 420px; }
+    .login-brand { text-align: center; margin-bottom: 32px; }
+    .login-brand .brand-icon { font-size: 3rem; margin-bottom: 12px; }
+    .login-brand h1 { font-size: 1.8rem; font-weight: 700; color: var(--white); letter-spacing: .5px; }
+    .login-brand p { color: rgba(255,255,255,.5); font-size: .85rem; margin-top: 4px; }
+    .login-card { background: var(--white); border-radius: var(--radius-lg); padding: 32px; box-shadow: var(--shadow-lg); }
+    .login-card h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: 6px; }
+    .login-card .sub { font-size: .83rem; color: var(--slate-500); margin-bottom: 24px; }
+    .login-footer { text-align: center; margin-top: 20px; font-size: .83rem; color: rgba(255,255,255,.5); }
+    .login-footer a { color: var(--teal-500); font-weight: 500; }
+    .demo-box { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1); border-radius: var(--radius-sm); padding: 14px 16px; margin-top: 20px; }
+    .demo-box p { font-size: .72rem; color: rgba(255,255,255,.5); margin-bottom: 8px; text-transform: uppercase; letter-spacing: .6px; font-weight: 600; }
+    .demo-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+    .demo-row span { font-size: .76rem; color: rgba(255,255,255,.6); font-family: var(--font-mono); }
+    .demo-row button { font-size: .72rem; color: var(--teal-500); background: none; border: none; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
+    .demo-row button:hover { background: rgba(20,184,166,.15); }
+    #login-error { display: none; }
+  </style>
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="login-brand">
+      <div class="brand-icon">⛓️</div>
+      <h1>SupplyNC</h1>
+      <p>National Supply Chain Management System</p>
+    </div>
+
+    <div class="login-card">
+      <h2>Welcome back</h2>
+      <p class="sub">Sign in to your account to continue</p>
+
+      <div id="login-error" class="alert alert-danger">
+        <span class="alert-icon">⚠️</span>
+        <span id="login-error-msg"></span>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Email address <span class="required">*</span></label>
+        <input type="email" id="login-email" class="form-control" placeholder="your@email.com" autocomplete="email">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Password <span class="required">*</span></label>
+        <input type="password" id="login-password" class="form-control" placeholder="••••••••" autocomplete="current-password">
+        <div class="form-error" id="pw-error"></div>
+      </div>
+
+      <button class="btn btn-primary w-full btn-lg" id="login-btn" onclick="doLogin()">
+        Sign In →
+      </button>
+    </div>
+
+    <div class="login-footer">
+      Don't have an account? <a href="signup.html">Register here</a>
+    </div>
+
+    <div class="demo-box">
+      <p>Demo Accounts — click to fill</p>
+      <div class="demo-row">
+        <span>Admin → admin@supplync.org / Admin@2024</span>
+        <button onclick="fill('admin@supplync.org','Admin@2024')">Use</button>
+      </div>
+      <div class="demo-row">
+        <span>District → daniel.mwale@supplync.org / District@2024</span>
+        <button onclick="fill('daniel.mwale@supplync.org','District@2024')">Use</button>
+      </div>
+      <div class="demo-row">
+        <span>Province → patricia.banda@supplync.org / Province@2024</span>
+        <button onclick="fill('patricia.banda@supplync.org','Province@2024')">Use</button>
+      </div>
+      <div class="demo-row">
+        <span>HQ → george.tembo@supplync.org / HQ@2024secure</span>
+        <button onclick="fill('george.tembo@supplync.org','HQ@2024secure')">Use</button>
+      </div>
+      <div class="demo-row">
+        <span>Facility → alice.phiri@supplync.org / Facility@2024</span>
+        <button onclick="fill('alice.phiri@supplync.org','Facility@2024')">Use</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="assets/js/mock-data.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script>
+    // Already logged in?
+    if (Auth.isLoggedIn()) Auth.redirectToDashboard();
+
+    function fill(email, pw) {
+      document.getElementById('login-email').value = email;
+      document.getElementById('login-password').value = pw;
+    }
+
+    function doLogin() {
+      const email    = document.getElementById('login-email').value.trim();
+      const password = document.getElementById('login-password').value;
+      const errBox   = document.getElementById('login-error');
+      const errMsg   = document.getElementById('login-error-msg');
+      const btn      = document.getElementById('login-btn');
+
+      errBox.style.display = 'none';
+
+      if (!email || !password) {
+        errMsg.textContent = 'Please enter your email and password.';
+        errBox.style.display = 'flex';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'Signing in…';
+
+      setTimeout(() => {
+        const result = Auth.login(email, password);
+        if (result.success) {
+          Auth.redirectToDashboard();
+        } else {
+          errMsg.textContent = result.message;
+          errBox.style.display = 'flex';
+          btn.disabled = false;
+          btn.textContent = 'Sign In →';
+        }
+      }, 600);
+    }
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Enter') doLogin();
+    });
+  </script>
+</body>
+</html>

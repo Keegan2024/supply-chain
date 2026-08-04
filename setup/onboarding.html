@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Setup & Onboarding — SupplyNC</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<script src="../assets/js/mock-data.js"></script>
+<script src="../assets/js/auth.js"></script>
+<script>
+Auth.requireLogin();
+if (Auth.getRole() !== 'admin') { alert('Access denied.'); Auth.redirectToDashboard(); }
+
+const user = Auth.getUser();
+
+function renderPage() {
+  const provinces  = DB.get('provinces');
+  const districts  = DB.get('districts');
+  const facilities = DB.get('facilities');
+  const tab        = window._tab || 'provinces';
+
+  UI.shell('Setup & Onboarding', 'onboarding', `
+    <div class="mb-16">
+      <h2 class="fw-700" style="font-size:1.1rem">System Setup & Onboarding</h2>
+      <div class="text-muted text-sm">Manage the full geographic hierarchy — provinces, districts, and facilities</div>
+    </div>
+
+    <!-- Summary -->
+    <div class="stats-grid mb-16">
+      <div class="stat-card"><div class="stat-icon blue">🌍</div><div><div class="stat-value">${provinces.length}</div><div class="stat-label">Provinces</div></div></div>
+      <div class="stat-card"><div class="stat-icon teal">🗺️</div><div><div class="stat-value">${districts.length}</div><div class="stat-label">Districts</div></div></div>
+      <div class="stat-card"><div class="stat-icon green">🏥</div><div><div class="stat-value">${facilities.length}</div><div class="stat-label">Facilities</div></div></div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab-btn ${tab==='provinces'?'active':''}" onclick="window._tab='provinces';renderPage()">🌍 Provinces (${provinces.length})</button>
+      <button class="tab-btn ${tab==='districts'?'active':''}" onclick="window._tab='districts';renderPage()">🗺️ Districts (${districts.length})</button>
+      <button class="tab-btn ${tab==='facilities'?'active':''}" onclick="window._tab='facilities';renderPage()">🏥 Facilities (${facilities.length})</button>
+    </div>
+
+    <!-- Provinces Tab -->
+    ${tab === 'provinces' ? `
+    <div class="card">
+      <div class="card-header">
+        <div><div class="card-title">🌍 Provinces</div></div>
+        <button class="btn btn-primary btn-sm" onclick="UI.openModal('modal-province')">+ Add Province</button>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>Name</th><th>Code</th><th>Manager</th><th>Districts</th><th>Facilities</th><th>Actions</th></tr></thead>
+          <tbody>
+            ${provinces.length === 0
+              ? `<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">🌍</div><div class="empty-title">No provinces added</div></div></td></tr>`
+              : provinces.map(p => {
+                  const pDists = districts.filter(d=>d.provinceId===p.id).length;
+                  const pFacs  = facilities.filter(f => districts.filter(d=>d.provinceId===p.id).some(d=>d.id===f.districtId)).length;
+                  return `<tr>
+                    <td class="fw-600 text-sm">${UI.escHtml(p.name)}</td>
+                    <td class="td-mono text-sm text-muted">${p.code}</td>
+                    <td class="text-sm">${p.managerId ? UI.escHtml(DB.getUserName(p.managerId)) : '<span class="text-muted">Unassigned</span>'}</td>
+                    <td class="text-sm">${pDists}</td>
+                    <td class="text-sm">${pFacs}</td>
+                    <td>
+                      <button class="btn btn-outline btn-sm" onclick="editProvince('${p.id}')">✏️ Edit</button>
+                      <button class="btn btn-danger btn-sm" onclick="deleteItem('provinces','${p.id}','${UI.escHtml(p.name)}')">🗑</button>
+                    </td>
+                  </tr>`;
+                }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>` : ''}
+
+    <!-- Districts Tab -->
+    ${tab === 'districts' ? `
+    <div class="card">
+      <div class="card-header">
+        <div><div class="card-title">🗺️ Districts</div></div>
+        <button class="btn btn-primary btn-sm" onclick="UI.openModal('modal-district')">+ Add District</button>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>Name</th><th>Code</th><th>Province</th><th>Manager</th><th>Facilities</th><th>Actions</th></tr></thead>
+          <tbody>
+            ${districts.length === 0
+              ? `<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">🗺️</div><div class="empty-title">No districts added</div></div></td></tr>`
+              : districts.map(d => {
+                  const dFacs = facilities.filter(f=>f.districtId===d.id).length;
+                  return `<tr>
+                    <td class="fw-600 text-sm">${UI.escHtml(d.name)}</td>
+                    <td class="td-mono text-sm text-muted">${d.code}</td>
+                    <td class="text-sm">${UI.escHtml(DB.getProvinceName(d.provinceId))}</td>
+                    <td class="text-sm">${d.managerId ? UI.escHtml(DB.getUserName(d.managerId)) : '<span class="text-muted">Unassigned</span>'}</td>
+                    <td class="text-sm">${dFacs}</td>
+                    <td>
+                      <button class="btn btn-outline btn-sm" onclick="editDistrict('${d.id}')">✏️ Edit</button>
+                      <button class="btn btn-danger btn-sm" onclick="deleteItem('districts','${d.id}','${UI.escHtml(d.name)}')">🗑</button>
+                    </td>
+                  </tr>`;
+                }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>` : ''}
+
+    <!-- Facilities Tab -->
+    ${tab === 'facilities' ? `
+    <div class="card">
+      <div class="card-header">
+        <div><div class="card-title">🏥 Facilities</div></div>
+        <button class="btn btn-primary btn-sm" onclick="UI.openModal('modal-facility')">+ Add Facility</button>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>Name</th><th>Code</th><th>Type</th><th>District</th><th>Province</th><th>Phone</th><th>Actions</th></tr></thead>
+          <tbody>
+            ${facilities.length === 0
+              ? `<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">🏥</div><div class="empty-title">No facilities added</div></div></td></tr>`
+              : facilities.map(f => `<tr>
+                  <td class="fw-600 text-sm">${UI.escHtml(f.name)}</td>
+                  <td class="td-mono text-sm text-muted">${f.code}</td>
+                  <td class="text-sm">${f.type}</td>
+                  <td class="text-sm">${UI.escHtml(DB.getDistrictName(f.districtId))}</td>
+                  <td class="text-sm text-muted">${UI.escHtml(DB.getProvinceName(f.provinceId))}</td>
+                  <td class="text-sm text-muted">${f.phone||'—'}</td>
+                  <td>
+                    <button class="btn btn-outline btn-sm" onclick="editFacility('${f.id}')">✏️ Edit</button>
+                    <button class="btn btn-danger btn-sm" onclick="deleteItem('facilities','${f.id}','${UI.escHtml(f.name)}')">🗑</button>
+                  </td>
+                </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>` : ''}
+
+    <!-- Province Modal -->
+    <div class="modal-overlay" id="modal-province">
+      <div class="modal">
+        <div class="modal-header">
+          <span class="modal-title" id="prov-modal-title">Add Province</span>
+          <button class="modal-close" onclick="UI.closeModal('modal-province')">✕</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="prov-id">
+          <div class="form-row cols-2">
+            <div class="form-group">
+              <label class="form-label">Province Name <span class="required">*</span></label>
+              <input type="text" id="prov-name" class="form-control" placeholder="e.g. Lusaka Province">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Code <span class="required">*</span></label>
+              <input type="text" id="prov-code" class="form-control" placeholder="e.g. LSK" maxlength="5">
+            </div>
+          </div>
+          <div class="form-group mb-0">
+            <label class="form-label">Province Manager</label>
+            <select id="prov-mgr" class="form-control">
+              <option value="">— Assign later —</option>
+              ${DB.get('users').filter(u=>u.role==='province'&&u.status==='active').map(u=>`<option value="${u.id}">${UI.escHtml(u.name)}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="UI.closeModal('modal-province')">Cancel</button>
+          <button class="btn btn-primary" onclick="saveProvince()">Save Province</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- District Modal -->
+    <div class="modal-overlay" id="modal-district">
+      <div class="modal">
+        <div class="modal-header">
+          <span class="modal-title" id="dist-modal-title">Add District</span>
+          <button class="modal-close" onclick="UI.closeModal('modal-district')">✕</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="dist-id">
+          <div class="form-row cols-2">
+            <div class="form-group">
+              <label class="form-label">District Name <span class="required">*</span></label>
+              <input type="text" id="dist-name" class="form-control" placeholder="e.g. Lusaka District">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Code <span class="required">*</span></label>
+              <input type="text" id="dist-code" class="form-control" placeholder="e.g. LD" maxlength="5">
+            </div>
+          </div>
+          <div class="form-row cols-2">
+            <div class="form-group">
+              <label class="form-label">Province <span class="required">*</span></label>
+              <select id="dist-prov" class="form-control">
+                <option value="">— Select —</option>
+                ${DB.get('provinces').map(p=>`<option value="${p.id}">${UI.escHtml(p.name)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">District Manager</label>
+              <select id="dist-mgr" class="form-control">
+                <option value="">— Assign later —</option>
+                ${DB.get('users').filter(u=>u.role==='district'&&u.status==='active').map(u=>`<option value="${u.id}">${UI.escHtml(u.name)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="UI.closeModal('modal-district')">Cancel</button>
+          <button class="btn btn-primary" onclick="saveDistrict()">Save District</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Facility Modal -->
+    <div class="modal-overlay" id="modal-facility">
+      <div class="modal modal-lg">
+        <div class="modal-header">
+          <span class="modal-title" id="fac-modal-title">Add Facility</span>
+          <button class="modal-close" onclick="UI.closeModal('modal-facility')">✕</button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="fac-id">
+          <div class="form-row cols-2">
+            <div class="form-group">
+              <label class="form-label">Facility Name <span class="required">*</span></label>
+              <input type="text" id="fac-name" class="form-control" placeholder="e.g. Matero Level 1 Hospital">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Code <span class="required">*</span></label>
+              <input type="text" id="fac-code" class="form-control" placeholder="e.g. MLH-01">
+            </div>
+          </div>
+          <div class="form-row cols-2">
+            <div class="form-group">
+              <label class="form-label">Type <span class="required">*</span></label>
+              <select id="fac-type" class="form-control">
+                <option value="">— Select type —</option>
+                <option value="Hospital">Hospital</option>
+                <option value="Health Centre">Health Centre</option>
+                <option value="Clinic">Clinic</option>
+                <option value="Pharmacy">Pharmacy</option>
+                <option value="Laboratory">Laboratory</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Province <span class="required">*</span></label>
+              <select id="fac-prov" class="form-control" onchange="loadFacDistricts()">
+                <option value="">— Select —</option>
+                ${DB.get('provinces').map(p=>`<option value="${p.id}">${UI.escHtml(p.name)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="form-row cols-2">
+            <div class="form-group">
+              <label class="form-label">District <span class="required">*</span></label>
+              <select id="fac-dist" class="form-control">
+                <option value="">— Select Province first —</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Phone</label>
+              <input type="tel" id="fac-phone" class="form-control" placeholder="+260 211 xxx xxx">
+            </div>
+          </div>
+          <div class="form-group mb-0">
+            <label class="form-label">Address</label>
+            <input type="text" id="fac-address" class="form-control" placeholder="Street, Suburb, City">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="UI.closeModal('modal-facility')">Cancel</button>
+          <button class="btn btn-primary" onclick="saveFacility()">Save Facility</button>
+        </div>
+      </div>
+    </div>
+  `);
+}
+
+function loadFacDistricts() {
+  const provId = document.getElementById('fac-prov').value;
+  const dists  = DB.get('districts').filter(d=>d.provinceId===provId);
+  document.getElementById('fac-dist').innerHTML = '<option value="">— Select District —</option>' +
+    dists.map(d=>`<option value="${d.id}">${UI.escHtml(d.name)}</option>`).join('');
+}
+
+function editProvince(id) {
+  const p = DB.getOne('provinces', id);
+  if (!p) return;
+  document.getElementById('prov-modal-title').textContent = 'Edit Province';
+  document.getElementById('prov-id').value   = id;
+  document.getElementById('prov-name').value = p.name;
+  document.getElementById('prov-code').value = p.code;
+  document.getElementById('prov-mgr').value  = p.managerId || '';
+  UI.openModal('modal-province');
+}
+
+function saveProvince() {
+  const id   = document.getElementById('prov-id').value;
+  const name = document.getElementById('prov-name').value.trim();
+  const code = document.getElementById('prov-code').value.trim();
+  const mgr  = document.getElementById('prov-mgr').value;
+  if (!name || !code) { UI.toast('Name and code are required.', 'error'); return; }
+  if (id) {
+    DB.update('provinces', id, { name, code, managerId: mgr || null });
+    UI.toast('Province updated.', 'success');
+  } else {
+    DB.add('provinces', { id: DB.genId('prov'), name, code, managerId: mgr || null, createdAt: new Date().toISOString().split('T')[0] });
+    UI.toast('Province added.', 'success');
+  }
+  UI.closeModal('modal-province');
+  renderPage();
+}
+
+function editDistrict(id) {
+  const d = DB.getOne('districts', id);
+  if (!d) return;
+  document.getElementById('dist-modal-title').textContent = 'Edit District';
+  document.getElementById('dist-id').value   = id;
+  document.getElementById('dist-name').value = d.name;
+  document.getElementById('dist-code').value = d.code;
+  document.getElementById('dist-prov').value = d.provinceId;
+  document.getElementById('dist-mgr').value  = d.managerId || '';
+  UI.openModal('modal-district');
+}
+
+function saveDistrict() {
+  const id    = document.getElementById('dist-id').value;
+  const name  = document.getElementById('dist-name').value.trim();
+  const code  = document.getElementById('dist-code').value.trim();
+  const provId= document.getElementById('dist-prov').value;
+  const mgr   = document.getElementById('dist-mgr').value;
+  if (!name || !code || !provId) { UI.toast('Name, code and province are required.', 'error'); return; }
+  if (id) {
+    DB.update('districts', id, { name, code, provinceId: provId, managerId: mgr || null });
+    UI.toast('District updated.', 'success');
+  } else {
+    DB.add('districts', { id: DB.genId('dist'), name, code, provinceId: provId, managerId: mgr || null, createdAt: new Date().toISOString().split('T')[0] });
+    UI.toast('District added.', 'success');
+  }
+  UI.closeModal('modal-district');
+  renderPage();
+}
+
+function editFacility(id) {
+  const f = DB.getOne('facilities', id);
+  if (!f) return;
+  document.getElementById('fac-modal-title').textContent = 'Edit Facility';
+  document.getElementById('fac-id').value      = id;
+  document.getElementById('fac-name').value    = f.name;
+  document.getElementById('fac-code').value    = f.code;
+  document.getElementById('fac-type').value    = f.type;
+  document.getElementById('fac-prov').value    = f.provinceId;
+  document.getElementById('fac-phone').value   = f.phone || '';
+  document.getElementById('fac-address').value = f.address || '';
+  loadFacDistricts();
+  setTimeout(() => { document.getElementById('fac-dist').value = f.districtId; }, 100);
+  UI.openModal('modal-facility');
+}
+
+function saveFacility() {
+  const id      = document.getElementById('fac-id').value;
+  const name    = document.getElementById('fac-name').value.trim();
+  const code    = document.getElementById('fac-code').value.trim();
+  const type    = document.getElementById('fac-type').value;
+  const provId  = document.getElementById('fac-prov').value;
+  const distId  = document.getElementById('fac-dist').value;
+  const phone   = document.getElementById('fac-phone').value.trim();
+  const address = document.getElementById('fac-address').value.trim();
+  if (!name || !code || !type || !distId) { UI.toast('Name, code, type and district are required.', 'error'); return; }
+  const data = { name, code, type, provinceId: provId, districtId: distId, phone, address };
+  if (id) {
+    DB.update('facilities', id, data);
+    UI.toast('Facility updated.', 'success');
+  } else {
+    DB.add('facilities', { id: DB.genId('fac'), ...data, createdAt: new Date().toISOString().split('T')[0] });
+    UI.toast('Facility added.', 'success');
+  }
+  UI.closeModal('modal-facility');
+  renderPage();
+}
+
+function deleteItem(table, id, name) {
+  if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+  DB.remove(table, id);
+  UI.toast(`${name} deleted.`, 'warning');
+  renderPage();
+}
+
+renderPage();
+</script>
+</body>
+</html>

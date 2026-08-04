@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Notifications — SupplyNC</title>
+  <link rel="stylesheet" href="assets/css/style.css">
+  <style>
+    .notif-item {
+      display:flex; align-items:flex-start; gap:14px;
+      padding:16px 20px; border-bottom:1px solid var(--slate-100);
+      cursor:pointer; transition:background .12s;
+      position:relative;
+    }
+    .notif-item:hover { background:var(--slate-50); }
+    .notif-item.unread { background:var(--blue-50); }
+    .notif-item.unread::before {
+      content:''; position:absolute; left:0; top:0; bottom:0;
+      width:3px; background:var(--blue-600); border-radius:0 2px 2px 0;
+    }
+    .notif-icon {
+      width:38px; height:38px; border-radius:50%;
+      display:flex; align-items:center; justify-content:center;
+      font-size:1.1rem; flex-shrink:0;
+    }
+    .notif-icon.blue   { background:var(--blue-50);   }
+    .notif-icon.green  { background:var(--green-100); }
+    .notif-icon.amber  { background:var(--amber-100); }
+    .notif-icon.red    { background:var(--red-100);   }
+    .notif-icon.teal   { background:var(--teal-100);  }
+    .notif-title { font-size:.88rem; font-weight:600; margin-bottom:3px; }
+    .notif-body  { font-size:.8rem; color:var(--slate-600); line-height:1.5; }
+    .notif-time  { font-size:.72rem; color:var(--slate-400); margin-top:4px; }
+    .unread-dot  { width:8px; height:8px; border-radius:50%; background:var(--blue-600); flex-shrink:0; margin-top:6px; }
+    .filter-tab  { }
+  </style>
+</head>
+<body>
+<script src="assets/js/mock-data.js"></script>
+<script src="assets/js/auth.js"></script>
+<script>
+Auth.requireLogin();
+const user = Auth.getUser();
+const role = user.role;
+
+// Generate role-appropriate notifications from system data
+function generateNotifications() {
+  const notifs = [];
+  const now    = new Date();
+
+  // ---- ALL ROLES: Report status updates for own submissions ----
+  DB.get('reports').filter(r => r.submittedBy === user.id).forEach(r => {
+    if (r.status === 'approved') {
+      notifs.push({ id:'rpt_appr_'+r.id, type:'report_approved', icon:'✅', color:'green',
+        title:'Report Approved', body:`Your ${r.reportType||'monthly'} report for <b>${r.period}</b> has been approved by ${DB.getUserName(r.reviewedBy)}.`,
+        time: r.reviewedAt, link:'reports/history.html', read: isRead('rpt_appr_'+r.id) });
+    }
+    if (r.status === 'rejected') {
+      notifs.push({ id:'rpt_rej_'+r.id, type:'report_rejected', icon:'❌', color:'red',
+        title:'Report Rejected', body:`Your report for <b>${r.period}</b> was rejected. Reason: <i>${r.rejectionReason||'See history'}</i>.`,
+        time: r.reviewedAt, link:'reports/history.html', read: isRead('rpt_rej_'+r.id) });
+    }
+  });
+
+  // ---- DISTRICT / PROVINCE / HQ / ADMIN: Pending reports to review ----
+  if (['district','province','hq','admin'].includes(role)) {
+    const pendingReports = DB.get('reports').filter(r => {
+      if (r.status !== 'pending') return false;
+      if (role === 'district') return r.districtId === user.districtId;
+      if (role === 'province') {
+        const distIds = DB.get('districts').filter(d=>d.provinceId===user.provinceId).map(d=>d.id);
+        return distIds.includes(r.districtId);
+      }
+      return true;
+    });
+    if (pendingReports.length > 0) {
+      notifs.push({ id:'pending_reports', type:'reports_pending', icon:'📋', color:'amber',
+        title:`${pendingReports.length} Report${pendingReports.length>1?'s':''} Awaiting Review`,
+        body:`You have <b>${pendingReports.length}</b> pending report${pendingReports.length>1?'s':''} to review and action.`,
+        time: pendingReports[0]?.submittedAt, link:'reports/review.html', read: isRead('pending_reports') });
+    }
+  }
+
+  // ---- ADMIN: Pending signups ----
+  if (role === 'admin') {
+    const pending = DB.get('users').filter(u => u.status === 'pending');
+    if (pending.length > 0) {
+      notifs.push({ id:'pending_signups', type:'signups', icon:'🔔', color:'amber',
+        title:`${pending.length} Signup${pending.length>1?'s':''} Awaiting Approval`,
+        body:`<b>${pending.length}</b> new account application${pending.length>1?'s':''} need your review and approval.`,
+        time: pending[0]?.createdAt, link:'users/signup-approvals.html', read: isRead('pending_signups') });
+    }
+  }
+
+  // ---- ALL: Delivery/Requisition updates ----
+  const myReqs = DB.get('requisitions').filter(r => {
+    if (role === 'facility') return r.fromId === user.facilityId || r.toId === user.facilityId;
+    if (role === 'district') return r.fromId === user.districtId || r.toId === user.districtId;
+    if (role === 'province') return r.fromId === user.provinceId || r.toId === user.provinceId;
+    return true;
+  });
+  myReqs.filter(r=>r.status==='dispatched'&&r.senderConfirmed&&r.transporterConfirmed&&!r.receiverConfirmed).forEach(r=>{
+    const isReceiver = (role==='facility'&&r.toId===user.facilityId)||(role==='district'&&r.toId===user.districtId)||(role==='province'&&r.toId===user.provinceId);
+    if (isReceiver) {
+      notifs.push({ id:'rcv_'+r.id, type:'delivery_pending', icon:'📦', color:'teal',
+        title:'Delivery Awaiting Your Confirmation', body:`Commodities from <b>${getLevelLabel(r.fromLevel,r.fromId)}</b> are in transit. Please confirm receipt.`,
+        time: r.dispatchedAt, link:'requisitions/track.html', read: isRead('rcv_'+r.id) });
+    }
+  });
+  myReqs.filter(r=>r.receiverConfirmed&&!r.managerSignOff&&['district','province','hq','admin'].includes(role)).forEach(r=>{
+    notifs.push({ id:'signoff_'+r.id, type:'signoff_needed', icon:'✍️', color:'blue',
+      title:'Manager Sign-off Required', body:`Delivery REQ-${r.id.slice(-8).toUpperCase()} has been received. Your sign-off is needed to complete it.`,
+      time: r.receivedAt, link:'requisitions/track.html', read: isRead('signoff_'+r.id) });
+  });
+
+  // ---- DISTRICT+: Inbound commodity requests ----
+  if (['district','province','hq','admin'].includes(role)) {
+    const inbound = DB.get('requisitions').filter(r => {
+      if (r.status !== 'pending') return false;
+      if (role === 'district') return r.toLevel==='district'&&r.toId===user.districtId;
+      if (role === 'province') return r.toLevel==='province'&&r.toId===user.provinceId;
+      if (role === 'hq'||role==='admin') return r.toLevel==='hq';
+      return false;
+    });
+    if (inbound.length > 0) {
+      notifs.push({ id:'inbound_reqs', type:'inbound_requests', icon:'📤', color:'blue',
+        title:`${inbound.length} Commodity Request${inbound.length>1?'s':''} Pending`,
+        body:`<b>${inbound.length}</b> new commodity request${inbound.length>1?'s':''} from facilities/districts need your action.`,
+        time: inbound[0]?.requestedAt, link:'requisitions/request.html', read: isRead('inbound_reqs') });
+    }
+  }
+
+  // ---- ALL: Low stock alerts ----
+  const stockData = role==='facility'
+    ? DB.get('facilityStock').filter(s=>s.facilityId===user.facilityId)
+    : [];
+  const lowStock = stockData.filter(s => {
+    const c = DB.getOne('commodities',s.commodityId);
+    return c && s.closingBalance < c.minThreshold;
+  });
+  if (lowStock.length > 0) {
+    notifs.push({ id:'low_stock', type:'low_stock', icon:'⚠️', color:'red',
+      title:`${lowStock.length} Item${lowStock.length>1?'s':''} Below Minimum Stock`,
+      body:`Low stock: <b>${lowStock.map(s=>DB.getCommodityName(s.commodityId)).join(', ')}</b>. Consider requesting a resupply.`,
+      time: new Date().toISOString(), link:'stock/warehouse.html', read: isRead('low_stock') });
+  }
+
+  // ---- ALL: Expiry alerts (30 days) ----
+  const in30 = new Date(now.getTime()+30*24*60*60*1000);
+  const expiring = stockData.filter(s => s.expiryDate && new Date(s.expiryDate)<=in30 && new Date(s.expiryDate)>=now);
+  if (expiring.length > 0) {
+    notifs.push({ id:'expiring', type:'expiring', icon:'🕐', color:'amber',
+      title:`${expiring.length} Item${expiring.length>1?'s':''} Expiring Within 30 Days`,
+      body:`Expiring soon: <b>${expiring.map(s=>DB.getCommodityName(s.commodityId)).join(', ')}</b>. Review and act before expiry.`,
+      time: new Date().toISOString(), link:'stock/warehouse.html', read: isRead('expiring') });
+  }
+
+  // ---- ALL: Report window opening/closing ----
+  const wOpen = DB.isReportWindowOpen(user.id);
+  if (['facility','district','province'].includes(role)) {
+    notifs.push({ id:'window_status', type:'window', icon:'📅', color: wOpen?'green':'red',
+      title: wOpen ? 'Report Window is Open' : 'Report Window is Closed',
+      body: wOpen
+        ? 'The monthly reporting window is currently open. Submit your report before the 7th.'
+        : 'The reporting window is closed. It reopens on the 30th of the month.',
+      time: new Date().toISOString(), link:'reports/window-manager.html', read: isRead('window_status') });
+  }
+
+  return notifs.sort((a,b) => new Date(b.time) - new Date(a.time));
+}
+
+function isRead(id) {
+  const readList = JSON.parse(localStorage.getItem('sc_read_notifs_'+user.id)||'[]');
+  return readList.includes(id);
+}
+function markRead(id) {
+  const readList = JSON.parse(localStorage.getItem('sc_read_notifs_'+user.id)||'[]');
+  if (!readList.includes(id)) { readList.push(id); localStorage.setItem('sc_read_notifs_'+user.id, JSON.stringify(readList)); }
+}
+function markAllRead(notifs) {
+  const ids = notifs.map(n=>n.id);
+  localStorage.setItem('sc_read_notifs_'+user.id, JSON.stringify(ids));
+}
+
+function renderPage() {
+  const all    = generateNotifications();
+  const filter = window._nfilter || 'all';
+  const unread = all.filter(n=>!n.read);
+  const shown  = filter==='unread' ? unread : all;
+
+  UI.shell('Notifications', 'notifications', `
+    <div class="d-flex justify-between align-center mb-16">
+      <div>
+        <h2 class="fw-700" style="font-size:1.05rem">Notifications</h2>
+        <div class="text-muted text-sm">${unread.length} unread · ${all.length} total</div>
+      </div>
+      <div class="d-flex gap-8">
+        <button class="btn btn-outline btn-sm" onclick="markAllRead(generateNotifications());renderPage()">Mark all read</button>
+      </div>
+    </div>
+
+    <!-- Filter -->
+    <div class="d-flex gap-8 mb-16">
+      <button class="btn btn-sm ${filter==='all'?'btn-primary':'btn-outline'}" onclick="window._nfilter='all';renderPage()">All (${all.length})</button>
+      <button class="btn btn-sm ${filter==='unread'?'btn-primary':'btn-outline'}" onclick="window._nfilter='unread';renderPage()">Unread (${unread.length})</button>
+    </div>
+
+    <div class="card">
+      ${shown.length === 0
+        ? `<div class="empty-state"><div class="empty-icon">🔔</div><div class="empty-title">No notifications</div><div class="empty-desc">You're all caught up!</div></div>`
+        : shown.map(n => `
+          <div class="notif-item ${n.read?'':'unread'}" onclick="openNotif('${n.id}','${n.link}')">
+            <div class="notif-icon ${n.color}">${n.icon}</div>
+            <div style="flex:1;min-width:0">
+              <div class="notif-title">${escHtml(n.title)}</div>
+              <div class="notif-body">${n.body}</div>
+              <div class="notif-time">${formatDateTime(n.time)}</div>
+            </div>
+            ${!n.read ? '<div class="unread-dot"></div>' : ''}
+            <div style="color:var(--slate-400);font-size:.9rem;flex-shrink:0">›</div>
+          </div>`).join('')}
+    </div>
+  `);
+}
+
+function openNotif(id, link) {
+  markRead(id);
+  if (link) window.location.href = link;
+  else renderPage();
+}
+
+function getLevelLabel(level, id) {
+  if (level==='facility') return DB.getFacilityName(id);
+  if (level==='district') return DB.getDistrictName(id)+' District';
+  if (level==='province') return DB.getProvinceName(id)+' Province';
+  if (level==='hq') return 'HQ';
+  return id;
+}
+function formatDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const diff = Date.now()-d.getTime();
+  if (diff < 60000)   return 'Just now';
+  if (diff < 3600000) return Math.floor(diff/60000)+'m ago';
+  if (diff < 86400000) return Math.floor(diff/3600000)+'h ago';
+  return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+}
+function escHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+renderPage();
+</script>
+</body>
+</html>

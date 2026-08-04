@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Province Dashboard — SupplyNC</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<script src="../assets/js/mock-data.js"></script>
+<script src="../assets/js/auth.js"></script>
+<script>
+Auth.requireLogin();
+if (!['province','hq','admin'].includes(Auth.getRole())) Auth.redirectToDashboard();
+
+const user       = Auth.getUser();
+const provinceId = user.provinceId || 'prov_01';
+const province   = DB.getOne('provinces', provinceId) || { name: 'My Province' };
+const districts  = DB.get('districts').filter(d => d.provinceId === provinceId);
+const distIds    = districts.map(d => d.id);
+const facilities = DB.get('facilities').filter(f => distIds.includes(f.districtId));
+const reports    = DB.get('reports').filter(r => distIds.includes(r.districtId));
+const pendingRpts = reports.filter(r => r.status === 'pending');
+const requisitions = DB.get('requisitions').filter(r => (r.toLevel === 'province' && r.toId === provinceId));
+const pendingReqs  = requisitions.filter(r => r.status === 'pending');
+const warehouseStock = DB.get('warehouseStock').filter(w => w.warehouseType === 'province' && w.warehouseId === provinceId);
+const allFacilityStaff = DB.get('users').filter(u => u.role === 'facility' && distIds.includes(u.districtId));
+
+UI.shell('Province Dashboard', 'dashboard', `
+  <div class="mb-16">
+    <h2 class="fw-700" style="font-size:1.2rem">${province.name}</h2>
+    <span class="text-muted text-sm">${districts.length} districts · ${facilities.length} facilities · ${allFacilityStaff.length} facility staff</span>
+  </div>
+
+  ${pendingRpts.length > 0 ? `
+    <div class="alert alert-warning">
+      <span class="alert-icon">📋</span>
+      <div><strong>${pendingRpts.length} report${pendingRpts.length > 1 ? 's' : ''} pending review.</strong>
+        <a href="../reports/review.html" style="margin-left:8px;color:var(--amber-600);font-weight:600">Review now →</a></div>
+    </div>` : ''}
+  ${pendingReqs.length > 0 ? `
+    <div class="alert alert-info">
+      <span class="alert-icon">📤</span>
+      <div><strong>${pendingReqs.length} inbound commodity request${pendingReqs.length > 1 ? 's' : ''}.</strong>
+        <a href="../requisitions/request.html" style="margin-left:8px;color:var(--blue-600);font-weight:600">View →</a></div>
+    </div>` : ''}
+
+  <!-- Stats -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-icon blue">🗺️</div>
+      <div><div class="stat-value">${districts.length}</div><div class="stat-label">Districts</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon teal">🏥</div>
+      <div><div class="stat-value">${facilities.length}</div><div class="stat-label">Facilities</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon amber">📋</div>
+      <div><div class="stat-value">${pendingRpts.length}</div><div class="stat-label">Reports to Review</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon amber">📤</div>
+      <div><div class="stat-value">${pendingReqs.length}</div><div class="stat-label">Pending Requests</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon blue">🏭</div>
+      <div><div class="stat-value">${warehouseStock.length}</div><div class="stat-label">Warehouse Lines</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon green">✅</div>
+      <div><div class="stat-value">${reports.filter(r=>r.status==='approved').length}</div><div class="stat-label">Approved Reports</div></div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+    <!-- Districts -->
+    <div class="card">
+      <div class="card-header">
+        <div><div class="card-title">🗺️ Districts</div><div class="card-subtitle">Under this province</div></div>
+        <a href="../dashboards/district.html" class="btn btn-outline btn-sm">District View</a>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>District</th><th>Facilities</th><th>Pending Reports</th><th>Manager</th></tr></thead>
+          <tbody>
+            ${districts.length === 0
+              ? `<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">🗺️</div><div class="empty-title">No districts</div></div></td></tr>`
+              : districts.map(d => {
+                  const dFacs  = facilities.filter(f => f.districtId === d.id).length;
+                  const dRpts  = reports.filter(r => r.districtId === d.id && r.status === 'pending').length;
+                  const mgr    = d.managerId ? DB.getUserName(d.managerId) : '—';
+                  return `<tr>
+                    <td class="fw-600 text-sm">${UI.escHtml(d.name)}</td>
+                    <td class="text-sm">${dFacs}</td>
+                    <td>${dRpts > 0 ? `<span class="badge badge-amber">${dRpts} pending</span>` : '<span class="badge badge-green">Clear</span>'}</td>
+                    <td class="text-sm text-muted">${UI.escHtml(mgr)}</td>
+                  </tr>`;
+                }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Province Warehouse -->
+    <div class="card">
+      <div class="card-header">
+        <div><div class="card-title">🏭 Province Warehouse</div><div class="card-subtitle">Central stock</div></div>
+        <a href="../stock/warehouse.html" class="btn btn-outline btn-sm">Manage</a>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>Commodity</th><th>Quantity</th><th>Batch</th><th>Expiry</th></tr></thead>
+          <tbody>
+            ${warehouseStock.length === 0
+              ? `<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No warehouse stock</div></div></td></tr>`
+              : warehouseStock.map(ws => {
+                  const com = DB.getOne('commodities', ws.commodityId);
+                  const isLow = com && ws.quantity < com.minThreshold;
+                  return `<tr>
+                    <td class="fw-600 text-sm">${UI.escHtml(DB.getCommodityName(ws.commodityId))}</td>
+                    <td><span class="${isLow ? 'text-danger fw-600' : ''}">${ws.quantity.toLocaleString()}</span></td>
+                    <td class="text-sm text-muted td-mono">${ws.batchNo || '—'}</td>
+                    <td class="text-sm text-muted">${ws.expiryDate ? UI.formatDate(ws.expiryDate) : '—'}</td>
+                  </tr>`;
+                }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick Actions -->
+  <div class="card mt-16">
+    <div class="card-header"><div class="card-title">⚡ Quick Actions</div></div>
+    <div class="card-body">
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <a href="../reports/review.html" class="btn btn-primary">✅ Review Reports</a>
+        <a href="../reports/submit.html" class="btn btn-teal">📋 Submit Province Report</a>
+        <a href="../requisitions/request.html" class="btn btn-outline">📤 Manage Requests</a>
+        <a href="../stock/warehouse.html" class="btn btn-outline">🏭 My Warehouse</a>
+        <a href="../stock/facility-stock.html" class="btn btn-outline">🏥 Facility Stock</a>
+        <a href="../reports/window-manager.html" class="btn btn-outline">📅 Report Window</a>
+        <a href="../users/manage.html" class="btn btn-outline">👥 Manage Users</a>
+        <a href="../dashboards/district.html" class="btn btn-outline">🗺️ District View</a>
+        <a href="../dashboards/facility.html" class="btn btn-outline">🏥 Facility View</a>
+      </div>
+    </div>
+  </div>
+`);
+</script>
+</body>
+</html>

@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Facility Dashboard — SupplyNC</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<script src="../assets/js/mock-data.js"></script>
+<script src="../assets/js/auth.js"></script>
+<script>
+Auth.requireLogin();
+if (!['facility','district','province','hq','admin'].includes(Auth.getRole())) Auth.redirectToDashboard();
+
+const user = Auth.getUser();
+const facilityId = user.facilityId || 'fac_01';
+const facility   = DB.getOne('facilities', facilityId) || { name: 'My Facility', code: 'FAC' };
+const stocks     = DB.getFacilityStockSummary(facilityId);
+const reports    = DB.get('reports').filter(r => r.facilityId === facilityId);
+const requisitions = DB.get('requisitions').filter(r => r.fromId === facilityId);
+const pendingReports = reports.filter(r => r.status === 'pending').length;
+const approvedReports = reports.filter(r => r.status === 'approved').length;
+const pendingReqs = requisitions.filter(r => r.status === 'pending').length;
+const windowOpen = DB.isReportWindowOpen(user.id);
+
+// Low stock alert
+const commodities = DB.get('commodities');
+const lowStock = stocks.filter(s => {
+  const com = DB.getOne('commodities', s.commodityId);
+  return com && s.closingBalance < com.minThreshold;
+});
+
+// Expiry alerts (within 30 days)
+const today = new Date();
+const in30  = new Date(); in30.setDate(today.getDate() + 30);
+const expiring = stocks.filter(s => s.expiryDate && new Date(s.expiryDate) <= in30 && new Date(s.expiryDate) >= today);
+
+UI.shell('Facility Dashboard', 'dashboard', `
+  <div class="mb-16">
+    <div class="d-flex align-center justify-between mb-8">
+      <div>
+        <h2 class="fw-700" style="font-size:1.25rem">${facility.name}</h2>
+        <span class="text-muted text-sm">${facility.code} · ${facility.type || 'Health Facility'} · ${DB.getDistrictName(facility.districtId)}</span>
+      </div>
+      <div class="d-flex gap-8">
+        ${windowOpen
+          ? '<span class="window-banner open" style="margin:0;padding:8px 14px">📅 Report window is OPEN</span>'
+          : '<span class="window-banner closed" style="margin:0;padding:8px 14px">🔒 Report window CLOSED</span>'}
+      </div>
+    </div>
+  </div>
+
+  <!-- Alerts -->
+  ${lowStock.length > 0 ? `
+    <div class="alert alert-warning mb-16">
+      <span class="alert-icon">⚠️</span>
+      <div><strong>${lowStock.length} commodity${lowStock.length > 1 ? 'ies' : 'y'} below minimum threshold.</strong>
+        Consider requesting a resupply. ${lowStock.map(s => DB.getCommodityName(s.commodityId)).join(', ')}</div>
+    </div>` : ''}
+  ${expiring.length > 0 ? `
+    <div class="alert alert-danger mb-16">
+      <span class="alert-icon">🕐</span>
+      <div><strong>${expiring.length} item${expiring.length > 1 ? 's' : ''} expiring within 30 days.</strong>
+        ${expiring.map(s => DB.getCommodityName(s.commodityId)).join(', ')}</div>
+    </div>` : ''}
+
+  <!-- Stats -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-icon blue">📦</div>
+      <div>
+        <div class="stat-value">${stocks.length}</div>
+        <div class="stat-label">Commodity Lines</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon ${pendingReports > 0 ? 'amber' : 'green'}">📋</div>
+      <div>
+        <div class="stat-value">${pendingReports}</div>
+        <div class="stat-label">Pending Reports</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon teal">✅</div>
+      <div>
+        <div class="stat-value">${approvedReports}</div>
+        <div class="stat-label">Approved Reports</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon ${pendingReqs > 0 ? 'amber' : 'blue'}">🚚</div>
+      <div>
+        <div class="stat-value">${pendingReqs}</div>
+        <div class="stat-label">Pending Requisitions</div>
+      </div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon red">⚠️</div>
+      <div>
+        <div class="stat-value">${lowStock.length}</div>
+        <div class="stat-label">Low Stock Alerts</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+    <!-- Stock Summary -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">📦 Stock Overview</div>
+          <div class="card-subtitle">Current closing balances</div>
+        </div>
+        <a href="../stock/warehouse.html" class="btn btn-outline btn-sm">View All</a>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr>
+            <th>Commodity</th>
+            <th>Unit</th>
+            <th>Balance</th>
+            <th>Status</th>
+          </tr></thead>
+          <tbody>
+            ${stocks.length === 0
+              ? `<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No stock yet</div><div class="empty-desc">Stock will appear once a delivery is confirmed.</div></div></td></tr>`
+              : stocks.slice(0, 6).map(s => {
+                const com = DB.getOne('commodities', s.commodityId);
+                const isLow = com && s.closingBalance < com.minThreshold;
+                const isExp = s.expiryDate && new Date(s.expiryDate) <= in30;
+                return `<tr>
+                  <td><div class="fw-600" style="font-size:.84rem">${UI.escHtml(DB.getCommodityName(s.commodityId))}</div>
+                    ${isExp ? '<div class="text-xs text-danger">⚠ Expiring soon</div>' : ''}</td>
+                  <td class="text-sm text-muted">${com?.unit || '—'}</td>
+                  <td><span class="fw-600 ${isLow ? 'text-danger' : 'text-success'}">${s.closingBalance.toLocaleString()}</span></td>
+                  <td>${isLow ? '<span class="badge badge-red">Low</span>' : '<span class="badge badge-green">OK</span>'}</td>
+                </tr>`;
+              }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Recent Reports -->
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div class="card-title">📋 Recent Reports</div>
+          <div class="card-subtitle">Your submitted reports</div>
+        </div>
+        <div class="d-flex gap-8">
+          ${windowOpen ? `<a href="../reports/submit.html" class="btn btn-primary btn-sm">+ New Report</a>` : ''}
+          <a href="../reports/history.html" class="btn btn-outline btn-sm">All Reports</a>
+        </div>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr>
+            <th>Period</th>
+            <th>Submitted</th>
+            <th>Status</th>
+          </tr></thead>
+          <tbody>
+            ${reports.length === 0
+              ? `<tr><td colspan="3"><div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No reports yet</div></div></td></tr>`
+              : reports.slice(0, 5).map(r => `<tr>
+                  <td class="fw-600">${r.period}</td>
+                  <td class="text-sm text-muted">${UI.formatDate(r.submittedAt)}</td>
+                  <td>${UI.statusBadge(r.status)}</td>
+                </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick Actions -->
+  <div class="card mt-16">
+    <div class="card-header"><div class="card-title">⚡ Quick Actions</div></div>
+    <div class="card-body">
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        ${windowOpen ? `<a href="../reports/submit.html" class="btn btn-primary">📋 Submit Report</a>` : '<button class="btn btn-outline" disabled>📋 Report Window Closed</button>'}
+        <a href="../requisitions/request.html" class="btn btn-teal">📤 Request Commodities</a>
+        <a href="../requisitions/track.html" class="btn btn-outline">🚚 Track Deliveries</a>
+        <a href="../stock/warehouse.html" class="btn btn-outline">📦 View My Stock</a>
+        <a href="../reports/history.html" class="btn btn-outline">🗂️ Report History</a>
+      </div>
+    </div>
+  </div>
+`);
+</script>
+</body>
+</html>

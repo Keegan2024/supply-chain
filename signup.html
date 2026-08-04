@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Create Account — SupplyNC</title>
+  <link rel="stylesheet" href="assets/css/style.css">
+  <style>
+    body { background: var(--blue-900); min-height:100vh; padding:30px 20px; }
+    .page-wrap { max-width:580px; margin:0 auto; }
+    .brand { text-align:center; margin-bottom:28px; }
+    .brand .icon { font-size:2.5rem; margin-bottom:8px; }
+    .brand h1 { font-size:1.6rem; font-weight:700; color:#fff; }
+    .brand p { color:rgba(255,255,255,.5); font-size:.83rem; }
+    .card-box { background:#fff; border-radius:16px; padding:32px; box-shadow:0 10px 40px rgba(0,0,0,.18); }
+    .card-box h2 { font-size:1.05rem; font-weight:600; margin-bottom:4px; }
+    .card-box .sub { font-size:.82rem; color:var(--slate-500); margin-bottom:24px; }
+    .signin-link { text-align:center; margin-top:18px; font-size:.83rem; color:rgba(255,255,255,.5); }
+    .signin-link a { color:var(--teal-500); font-weight:600; }
+    #success-box { display:none; }
+    .step-bar { display:flex; gap:6px; margin-bottom:24px; }
+    .step-dot { height:4px; flex:1; border-radius:99px; background:var(--slate-200); transition:background .3s; }
+    .step-dot.done { background:var(--teal-500); }
+    .step-dot.active { background:var(--blue-600); }
+    .step-label { font-size:.72rem; color:var(--slate-500); margin-bottom:16px; }
+  </style>
+</head>
+<body>
+<div class="page-wrap">
+  <div class="brand">
+    <div class="icon">⛓️</div>
+    <h1>SupplyNC</h1>
+    <p>Create your account — all signups require Administrator approval</p>
+  </div>
+
+  <div class="card-box">
+    <h2>Create Account</h2>
+    <p class="sub">Step <span id="step-num">1</span> of 3 — fill in all required fields to register.</p>
+
+    <!-- Step progress -->
+    <div class="step-bar">
+      <div class="step-dot active" id="dot-1"></div>
+      <div class="step-dot" id="dot-2"></div>
+      <div class="step-dot" id="dot-3"></div>
+    </div>
+
+    <!-- Success state -->
+    <div id="success-box" class="alert alert-success">
+      <span class="alert-icon">✅</span>
+      <div>
+        <strong>Application submitted!</strong><br>
+        <span id="success-msg"></span>
+      </div>
+    </div>
+
+    <!-- Error banner -->
+    <div id="err-box" class="alert alert-danger" style="display:none">
+      <span class="alert-icon">⚠️</span>
+      <span id="err-msg"></span>
+    </div>
+
+    <!-- STEP 1: Personal Details -->
+    <div id="step-1">
+      <div class="step-label">STEP 1 — Personal Details</div>
+      <div class="form-row cols-2">
+        <div class="form-group">
+          <label class="form-label">Full Name <span class="required">*</span></label>
+          <input type="text" id="su-name" class="form-control" placeholder="First Last Name">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Phone Number</label>
+          <input type="tel" id="su-phone" class="form-control" placeholder="+260 97 xxx xxxx">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Email Address <span class="required">*</span></label>
+        <input type="email" id="su-email" class="form-control" placeholder="your@email.com">
+      </div>
+      <div class="form-row cols-2">
+        <div class="form-group">
+          <label class="form-label">Password <span class="required">*</span></label>
+          <input type="password" id="su-pw" class="form-control" placeholder="Min. 8 characters">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Confirm Password <span class="required">*</span></label>
+          <input type="password" id="su-pw2" class="form-control" placeholder="Repeat password">
+        </div>
+      </div>
+      <button class="btn btn-primary w-full btn-lg" onclick="goStep2()">Next: Select Role →</button>
+    </div>
+
+    <!-- STEP 2: Role & Assignment -->
+    <div id="step-2" style="display:none">
+      <div class="step-label">STEP 2 — Role & Assignment</div>
+      <div class="form-group">
+        <label class="form-label">Account Role <span class="required">*</span></label>
+        <select id="su-role" class="form-control" onchange="onRoleChange()">
+          <option value="">— Select your role —</option>
+          <option value="facility">Facility Staff</option>
+          <option value="district">District Manager</option>
+          <option value="province">Province Manager</option>
+          <option value="hq">HQ Management</option>
+          <option value="admin">Administrator (IT)</option>
+        </select>
+        <div class="form-hint">Select the role that matches your position.</div>
+      </div>
+
+      <!-- Facility fields -->
+      <div id="field-facility" style="display:none">
+        <div class="form-row cols-2">
+          <div class="form-group">
+            <label class="form-label">Province <span class="required">*</span></label>
+            <select id="su-fac-prov" class="form-control" onchange="loadFacDistricts()">
+              <option value="">— Select —</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">District <span class="required">*</span></label>
+            <select id="su-fac-dist" class="form-control" onchange="loadFacilities()">
+              <option value="">— Select —</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Facility <span class="required">*</span></label>
+          <select id="su-fac-fac" class="form-control">
+            <option value="">— Select District first —</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- District fields -->
+      <div id="field-district" style="display:none">
+        <div class="form-row cols-2">
+          <div class="form-group">
+            <label class="form-label">Province <span class="required">*</span></label>
+            <select id="su-dist-prov" class="form-control" onchange="loadDistrictDistricts()">
+              <option value="">— Select —</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">District <span class="required">*</span></label>
+            <select id="su-dist-dist" class="form-control">
+              <option value="">— Select —</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Province fields -->
+      <div id="field-province" style="display:none">
+        <div class="form-group">
+          <label class="form-label">Province <span class="required">*</span></label>
+          <select id="su-prov-prov" class="form-control">
+            <option value="">— Select —</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- HQ / Admin: no extra fields needed -->
+      <div id="field-hq" style="display:none">
+        <div class="alert alert-info">
+          <span class="alert-icon">ℹ️</span>
+          <div>HQ Management accounts have national-level access. Your account will be reviewed by the Administrator.</div>
+        </div>
+      </div>
+      <div id="field-admin" style="display:none">
+        <div class="alert alert-warning">
+          <span class="alert-icon">⚠️</span>
+          <div>Administrator accounts require approval from an existing Administrator. Ensure your request is authorised.</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-outline btn-lg" style="flex:1" onclick="goStep(1)">← Back</button>
+        <button class="btn btn-primary btn-lg" style="flex:2" onclick="goStep3()">Next: Review →</button>
+      </div>
+    </div>
+
+    <!-- STEP 3: Review & Submit -->
+    <div id="step-3" style="display:none">
+      <div class="step-label">STEP 3 — Review & Submit</div>
+      <div id="review-box" style="background:var(--slate-50);border-radius:var(--radius-md);padding:18px;margin-bottom:20px">
+        <!-- filled by JS -->
+      </div>
+      <div class="alert alert-info" style="margin-bottom:20px">
+        <span class="alert-icon">📧</span>
+        <div>Once submitted, the <strong>Administrator</strong> will review your application. You will be notified when your account is approved or rejected.</div>
+      </div>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-outline btn-lg" style="flex:1" onclick="goStep(2)">← Back</button>
+        <button class="btn btn-primary btn-lg" style="flex:2" id="submit-btn" onclick="doSignup()">✅ Submit Application</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="signin-link">Already have an account? <a href="index.html">Sign in here</a></div>
+</div>
+
+<script src="assets/js/mock-data.js"></script>
+<script>
+  // Do NOT redirect logged-in users — they may want to create another account for testing
+  // Only redirect if already logged in and they didn't come from signup intentionally
+  // (Removed the Auth redirect that was breaking the page)
+
+  let currentStep = 1;
+
+  function showErr(msg) {
+    const b = document.getElementById('err-box');
+    document.getElementById('err-msg').textContent = msg;
+    b.style.display = 'flex';
+    b.scrollIntoView({ behavior:'smooth', block:'nearest' });
+  }
+  function hideErr() { document.getElementById('err-box').style.display = 'none'; }
+
+  function updateDots(step) {
+    document.getElementById('step-num').textContent = step;
+    [1,2,3].forEach(i => {
+      const d = document.getElementById('dot-' + i);
+      d.className = 'step-dot' + (i < step ? ' done' : i === step ? ' active' : '');
+    });
+  }
+
+  function goStep(n) {
+    hideErr();
+    [1,2,3].forEach(i => document.getElementById('step-'+i).style.display = 'none');
+    document.getElementById('step-'+n).style.display = 'block';
+    currentStep = n;
+    updateDots(n);
+    window.scrollTo({top:0, behavior:'smooth'});
+  }
+
+  function goStep2() {
+    hideErr();
+    const name  = document.getElementById('su-name').value.trim();
+    const email = document.getElementById('su-email').value.trim();
+    const pw    = document.getElementById('su-pw').value;
+    const pw2   = document.getElementById('su-pw2').value;
+    if (!name)              return showErr('Full name is required.');
+    if (!email || !email.includes('@')) return showErr('A valid email address is required.');
+    if (pw.length < 8)     return showErr('Password must be at least 8 characters.');
+    if (pw !== pw2)        return showErr('Passwords do not match.');
+    // Check email not already taken
+    const existing = DB.get('users').find(u => u.email.toLowerCase() === email.toLowerCase());
+    if (existing)          return showErr('An account with this email already exists. Please sign in instead.');
+    goStep(2);
+  }
+
+  function goStep3() {
+    hideErr();
+    const role = document.getElementById('su-role').value;
+    if (!role) return showErr('Please select your role.');
+
+    if (role === 'facility') {
+      if (!document.getElementById('su-fac-prov').value) return showErr('Please select your province.');
+      if (!document.getElementById('su-fac-dist').value) return showErr('Please select your district.');
+      if (!document.getElementById('su-fac-fac').value)  return showErr('Please select your facility.');
+    }
+    if (role === 'district') {
+      if (!document.getElementById('su-dist-prov').value) return showErr('Please select your province.');
+      if (!document.getElementById('su-dist-dist').value) return showErr('Please select your district.');
+    }
+    if (role === 'province') {
+      if (!document.getElementById('su-prov-prov').value) return showErr('Please select your province.');
+    }
+
+    // Build review box
+    const roleLabels = { facility:'Facility Staff', district:'District Manager', province:'Province Manager', hq:'HQ Management', admin:'Administrator (IT)' };
+    let assignment = '—';
+    if (role === 'facility')  assignment = DB.getFacilityName(document.getElementById('su-fac-fac').value);
+    if (role === 'district')  assignment = DB.getDistrictName(document.getElementById('su-dist-dist').value) + ' District';
+    if (role === 'province')  assignment = DB.getProvinceName(document.getElementById('su-prov-prov').value) + ' Province';
+    if (role === 'hq')        assignment = 'Headquarters';
+    if (role === 'admin')     assignment = 'System Administration';
+
+    document.getElementById('review-box').innerHTML = `
+      <div style="font-weight:600;margin-bottom:12px">📋 Application Summary</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div><div style="font-size:.72rem;color:var(--slate-500)">FULL NAME</div><div style="font-weight:600">${escHtml(document.getElementById('su-name').value.trim())}</div></div>
+        <div><div style="font-size:.72rem;color:var(--slate-500)">EMAIL</div><div style="font-weight:600">${escHtml(document.getElementById('su-email').value.trim())}</div></div>
+        <div><div style="font-size:.72rem;color:var(--slate-500)">PHONE</div><div style="font-weight:600">${escHtml(document.getElementById('su-phone').value.trim() || '—')}</div></div>
+        <div><div style="font-size:.72rem;color:var(--slate-500)">ROLE</div><div style="font-weight:600">${roleLabels[role]}</div></div>
+        <div style="grid-column:1/-1"><div style="font-size:.72rem;color:var(--slate-500)">ASSIGNED TO</div><div style="font-weight:600">${escHtml(assignment)}</div></div>
+        <div style="grid-column:1/-1"><div style="font-size:.72rem;color:var(--slate-500)">STATUS AFTER SUBMISSION</div><div><span style="background:var(--amber-100);color:var(--amber-600);padding:2px 10px;border-radius:99px;font-size:.76rem;font-weight:600">⏳ Pending Admin Approval</span></div></div>
+      </div>`;
+
+    goStep(3);
+  }
+
+  function onRoleChange() {
+    const role = document.getElementById('su-role').value;
+    ['facility','district','province','hq','admin'].forEach(r => {
+      document.getElementById('field-'+r).style.display = role === r ? 'block' : 'none';
+    });
+    const provinces = DB.get('provinces');
+    if (role === 'facility') {
+      document.getElementById('su-fac-prov').innerHTML = '<option value="">— Select Province —</option>' +
+        provinces.map(p=>`<option value="${p.id}">${escHtml(p.name)}</option>`).join('');
+    }
+    if (role === 'district') {
+      document.getElementById('su-dist-prov').innerHTML = '<option value="">— Select Province —</option>' +
+        provinces.map(p=>`<option value="${p.id}">${escHtml(p.name)}</option>`).join('');
+    }
+    if (role === 'province') {
+      document.getElementById('su-prov-prov').innerHTML = '<option value="">— Select Province —</option>' +
+        provinces.map(p=>`<option value="${p.id}">${escHtml(p.name)}</option>`).join('');
+    }
+  }
+
+  function loadFacDistricts() {
+    const provId = document.getElementById('su-fac-prov').value;
+    const dists  = DB.get('districts').filter(d => d.provinceId === provId);
+    document.getElementById('su-fac-dist').innerHTML = '<option value="">— Select District —</option>' +
+      dists.map(d=>`<option value="${d.id}">${escHtml(d.name)}</option>`).join('');
+    document.getElementById('su-fac-fac').innerHTML = '<option value="">— Select District first —</option>';
+  }
+
+  function loadFacilities() {
+    const distId = document.getElementById('su-fac-dist').value;
+    const facs   = DB.get('facilities').filter(f => f.districtId === distId);
+    document.getElementById('su-fac-fac').innerHTML = '<option value="">— Select Facility —</option>' +
+      facs.map(f=>`<option value="${f.id}">${escHtml(f.name)}</option>`).join('');
+  }
+
+  function loadDistrictDistricts() {
+    const provId = document.getElementById('su-dist-prov').value;
+    const dists  = DB.get('districts').filter(d => d.provinceId === provId);
+    document.getElementById('su-dist-dist').innerHTML = '<option value="">— Select District —</option>' +
+      dists.map(d=>`<option value="${d.id}">${escHtml(d.name)}</option>`).join('');
+  }
+
+  function doSignup() {
+    const btn = document.getElementById('submit-btn');
+    btn.disabled = true;
+    btn.textContent = 'Submitting…';
+
+    const role     = document.getElementById('su-role').value;
+    const name     = document.getElementById('su-name').value.trim();
+    const email    = document.getElementById('su-email').value.trim();
+    const pw       = document.getElementById('su-pw').value;
+    const phone    = document.getElementById('su-phone').value.trim();
+
+    let facilityId = null, districtId = null, provinceId = null;
+    if (role === 'facility') {
+      facilityId = document.getElementById('su-fac-fac').value;
+      districtId = document.getElementById('su-fac-dist').value;
+      provinceId = document.getElementById('su-fac-prov').value;
+    }
+    if (role === 'district') {
+      districtId = document.getElementById('su-dist-dist').value;
+      provinceId = document.getElementById('su-dist-prov').value;
+    }
+    if (role === 'province') {
+      provinceId = document.getElementById('su-prov-prov').value;
+    }
+
+    setTimeout(() => {
+      // Final duplicate check
+      if (DB.get('users').find(u => u.email.toLowerCase() === email.toLowerCase())) {
+        showErr('An account with this email already exists.');
+        btn.disabled = false; btn.textContent = '✅ Submit Application';
+        goStep(1); return;
+      }
+
+      const newUser = {
+        id: DB.genId('usr'),
+        name, email, password: pw, role,
+        status: 'pending',
+        level: role,
+        facilityId, districtId, provinceId,
+        phone,
+        avatar: name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase(),
+        createdAt: new Date().toISOString(),
+        privileges: []
+      };
+
+      DB.add('users', newUser);
+      DB.add('auditLog', {
+        id: DB.genId('log'), action: 'signup',
+        userId: newUser.id,
+        details: `New ${role} signup: ${name} (${email})`,
+        timestamp: new Date().toISOString()
+      });
+
+      // Hide all steps, show success
+      [1,2,3].forEach(i => document.getElementById('step-'+i).style.display = 'none');
+      document.getElementById('step-num').textContent = '✓';
+      [1,2,3].forEach(i => document.getElementById('dot-'+i).className = 'step-dot done');
+
+      document.getElementById('success-msg').textContent =
+        `Your application has been submitted. The Administrator will review and activate your account. Check your email for updates.`;
+      document.getElementById('success-box').style.display = 'flex';
+    }, 700);
+  }
+
+  function escHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>District Dashboard — SupplyNC</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<script src="../assets/js/mock-data.js"></script>
+<script src="../assets/js/auth.js"></script>
+<script>
+Auth.requireLogin();
+if (!['district','province','hq','admin'].includes(Auth.getRole())) Auth.redirectToDashboard();
+
+const user       = Auth.getUser();
+const districtId = user.districtId || 'dist_01';
+const district   = DB.getOne('districts', districtId) || { name: 'My District' };
+const facilities = DB.get('facilities').filter(f => f.districtId === districtId);
+const allUsers   = DB.get('users').filter(u => u.districtId === districtId && u.role === 'facility');
+const pendingUsers = DB.get('users').filter(u => u.status === 'pending');
+const reports    = DB.get('reports').filter(r => r.districtId === districtId);
+const pendingRpts = reports.filter(r => r.status === 'pending');
+const requisitions = DB.get('requisitions').filter(r => r.toId === districtId && r.toLevel === 'district');
+const pendingReqs  = requisitions.filter(r => r.status === 'pending');
+const warehouseStock = DB.get('warehouseStock').filter(w => w.warehouseType === 'district' && w.warehouseId === districtId);
+const commodities    = DB.get('commodities');
+
+// Low warehouse stock
+const lowWarehouse = warehouseStock.filter(ws => {
+  const com = DB.getOne('commodities', ws.commodityId);
+  return com && ws.quantity < com.minThreshold;
+});
+
+UI.shell('District Dashboard', 'dashboard', `
+  <div class="mb-16">
+    <h2 class="fw-700" style="font-size:1.2rem">${district.name}</h2>
+    <span class="text-muted text-sm">${DB.getProvinceName(district.provinceId)} · ${facilities.length} facilities under management</span>
+  </div>
+
+  ${pendingRpts.length > 0 ? `
+    <div class="alert alert-warning">
+      <span class="alert-icon">📋</span>
+      <div><strong>${pendingRpts.length} report${pendingRpts.length > 1 ? 's' : ''} awaiting your review.</strong>
+        <a href="../reports/review.html" style="margin-left:8px;color:var(--amber-600);font-weight:600">Review now →</a></div>
+    </div>` : ''}
+  ${pendingReqs.length > 0 ? `
+    <div class="alert alert-info">
+      <span class="alert-icon">📤</span>
+      <div><strong>${pendingReqs.length} commodity request${pendingReqs.length > 1 ? 's' : ''} from facilities.</strong>
+        <a href="../requisitions/request.html" style="margin-left:8px;color:var(--blue-600);font-weight:600">View requests →</a></div>
+    </div>` : ''}
+  ${lowWarehouse.length > 0 ? `
+    <div class="alert alert-danger">
+      <span class="alert-icon">⚠️</span>
+      <div><strong>${lowWarehouse.length} warehouse item${lowWarehouse.length > 1 ? 's' : ''} below minimum threshold.</strong></div>
+    </div>` : ''}
+
+  <!-- Stats -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-icon blue">🏥</div>
+      <div><div class="stat-value">${facilities.length}</div><div class="stat-label">Facilities</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon teal">👥</div>
+      <div><div class="stat-value">${allUsers.length}</div><div class="stat-label">Facility Staff</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon amber">📋</div>
+      <div><div class="stat-value">${pendingRpts.length}</div><div class="stat-label">Reports to Review</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon amber">📤</div>
+      <div><div class="stat-value">${pendingReqs.length}</div><div class="stat-label">Pending Requests</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon blue">🏭</div>
+      <div><div class="stat-value">${warehouseStock.length}</div><div class="stat-label">Warehouse Lines</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon ${lowWarehouse.length > 0 ? 'red' : 'green'}">⚠️</div>
+      <div><div class="stat-value">${lowWarehouse.length}</div><div class="stat-label">Low Stock Alerts</div></div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+    <!-- Facilities Overview -->
+    <div class="card">
+      <div class="card-header">
+        <div><div class="card-title">🏥 Facilities</div><div class="card-subtitle">Under this district</div></div>
+        <a href="../users/manage.html" class="btn btn-outline btn-sm">Manage</a>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>Facility</th><th>Type</th><th>Staff</th><th>Stock Lines</th></tr></thead>
+          <tbody>
+            ${facilities.length === 0
+              ? `<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">🏥</div><div class="empty-title">No facilities yet</div></div></td></tr>`
+              : facilities.map(f => {
+                  const staffCount = DB.get('users').filter(u => u.facilityId === f.id).length;
+                  const stockLines = DB.get('facilityStock').filter(s => s.facilityId === f.id).length;
+                  return `<tr>
+                    <td><div class="fw-600 text-sm">${UI.escHtml(f.name)}</div><div class="text-xs text-muted">${f.code}</div></td>
+                    <td class="text-sm">${f.type}</td>
+                    <td class="text-sm">${staffCount}</td>
+                    <td class="text-sm">${stockLines}</td>
+                  </tr>`;
+                }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Warehouse Stock -->
+    <div class="card">
+      <div class="card-header">
+        <div><div class="card-title">🏭 Warehouse Stock</div><div class="card-subtitle">District warehouse</div></div>
+        <a href="../stock/warehouse.html" class="btn btn-outline btn-sm">Manage</a>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>Commodity</th><th>Qty</th><th>Expiry</th><th>Status</th></tr></thead>
+          <tbody>
+            ${warehouseStock.length === 0
+              ? `<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No warehouse stock</div></div></td></tr>`
+              : warehouseStock.map(ws => {
+                  const com = DB.getOne('commodities', ws.commodityId);
+                  const isLow = com && ws.quantity < com.minThreshold;
+                  const expiryDate = ws.expiryDate ? new Date(ws.expiryDate) : null;
+                  const isExp = expiryDate && expiryDate <= new Date(Date.now() + 30*24*60*60*1000);
+                  return `<tr>
+                    <td class="fw-600 text-sm">${UI.escHtml(DB.getCommodityName(ws.commodityId))}</td>
+                    <td><span class="${isLow ? 'text-danger fw-600' : ''}">${ws.quantity.toLocaleString()}</span></td>
+                    <td class="text-sm ${isExp ? 'text-danger' : 'text-muted'}">${ws.expiryDate ? UI.formatDate(ws.expiryDate) : '—'}</td>
+                    <td>${isLow ? '<span class="badge badge-red">Low</span>' : '<span class="badge badge-green">OK</span>'}</td>
+                  </tr>`;
+                }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick Actions -->
+  <div class="card mt-16">
+    <div class="card-header"><div class="card-title">⚡ Quick Actions</div></div>
+    <div class="card-body">
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <a href="../reports/review.html" class="btn btn-primary">✅ Review Reports</a>
+        <a href="../reports/submit.html" class="btn btn-teal">📋 Submit District Report</a>
+        <a href="../requisitions/request.html" class="btn btn-outline">📤 Manage Requests</a>
+        <a href="../stock/warehouse.html" class="btn btn-outline">🏭 Warehouse</a>
+        <a href="../stock/facility-stock.html" class="btn btn-outline">🏥 Facility Stock</a>
+        <a href="../reports/window-manager.html" class="btn btn-outline">📅 Report Window</a>
+        <a href="../users/manage.html" class="btn btn-outline">👥 Manage Users</a>
+        <a href="../commodities/manage.html" class="btn btn-outline">💊 Commodities</a>
+      </div>
+    </div>
+  </div>
+`);
+</script>
+</body>
+</html>

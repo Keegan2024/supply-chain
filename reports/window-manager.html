@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Report Window Manager — SupplyNC</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<script src="../assets/js/mock-data.js"></script>
+<script src="../assets/js/auth.js"></script>
+<script>
+Auth.requireLogin();
+if (!Auth.can('manageReportWindow')) { alert('Access denied.'); Auth.redirectToDashboard(); }
+
+const user = Auth.getUser();
+
+function renderPage() {
+  const now     = new Date();
+  const day     = now.getDate();
+  const autoOpen = day >= 30 || day <= 7;
+  const windows  = DB.get('reportWindows');
+  const customWindows = windows.filter(w => w.type === 'custom');
+  const users    = DB.get('users').filter(u => u.status === 'active' && Auth.can('submitReports') === true || ['facility','district','province'].includes(u.role));
+
+  UI.shell('Report Window Manager', 'report-window', `
+    <div class="mb-16">
+      <h2 class="fw-700" style="font-size:1.1rem">Report Window Manager</h2>
+      <div class="text-muted text-sm">Control when reporting windows are open for submission</div>
+    </div>
+
+    <!-- Auto Window Status -->
+    <div class="card mb-16">
+      <div class="card-header">
+        <div><div class="card-title">📅 Automatic Monthly Window</div><div class="card-subtitle">System-managed — opens 30th, closes 7th of each month</div></div>
+        <div class="${autoOpen ? 'window-banner open' : 'window-banner closed'}" style="margin:0;padding:8px 14px">
+          ${autoOpen ? '🟢 Currently OPEN' : '🔴 Currently CLOSED'}
+        </div>
+      </div>
+      <div class="card-body">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
+          <div style="text-align:center;padding:16px;background:var(--slate-50);border-radius:var(--radius-sm)">
+            <div style="font-size:2rem;font-weight:700;color:var(--blue-600)">30th</div>
+            <div class="text-sm text-muted">Opens every month</div>
+          </div>
+          <div style="text-align:center;padding:16px;background:var(--slate-50);border-radius:var(--radius-sm)">
+            <div style="font-size:2rem;font-weight:700;color:var(--red-600)">7th</div>
+            <div class="text-sm text-muted">Closes every month</div>
+          </div>
+          <div style="text-align:center;padding:16px;background:var(--slate-50);border-radius:var(--radius-sm)">
+            <div style="font-size:2rem;font-weight:700;color:var(--slate-900)">${day}</div>
+            <div class="text-sm text-muted">Today's date</div>
+          </div>
+        </div>
+        <div class="alert ${autoOpen ? 'alert-success' : 'alert-info'} mt-16" style="margin-bottom:0">
+          <span class="alert-icon">${autoOpen ? '✅' : 'ℹ️'}</span>
+          <div>${autoOpen
+            ? 'The automatic window is currently open. All eligible users can submit reports until the 7th.'
+            : `The automatic window is closed. It will reopen on the 30th. You can manually reopen for specific users below.`}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Custom Reopen Windows -->
+    <div class="card mb-16">
+      <div class="card-header">
+        <div><div class="card-title">🔓 Custom Reopened Windows</div><div class="card-subtitle">Manually opened for specific users</div></div>
+        <button class="btn btn-primary btn-sm" onclick="UI.openModal('modal-reopen')">+ Reopen for User</button>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>Reopened For</th><th>Reason</th><th>Opened By</th><th>Opened At</th><th>Closes On</th><th>Status</th><th>Action</th></tr></thead>
+          <tbody>
+            ${customWindows.length === 0
+              ? `<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">🔓</div><div class="empty-title">No custom windows</div><div class="empty-desc">Use the button above to reopen the window for a specific user.</div></div></td></tr>`
+              : customWindows.map(w => {
+                  const isStillOpen = w.isOpen && new Date(w.reopenCloseDate) >= now;
+                  return `<tr>
+                    <td class="fw-600 text-sm">${UI.escHtml(DB.getUserName(w.reopenedFor))}</td>
+                    <td class="text-sm text-muted">${UI.escHtml(w.note || '—')}</td>
+                    <td class="text-sm">${UI.escHtml(DB.getUserName(w.reopenedBy))}</td>
+                    <td class="text-sm text-muted">${UI.formatDateTime(w.openedAt)}</td>
+                    <td class="text-sm ${isStillOpen ? 'text-danger fw-600' : 'text-muted'}">${UI.formatDate(w.reopenCloseDate)}</td>
+                    <td>${isStillOpen ? '<span class="badge badge-green">🟢 Open</span>' : '<span class="badge badge-slate">🔴 Closed</span>'}</td>
+                    <td>${isStillOpen ? `<button class="btn btn-danger btn-sm" onclick="closeWindow('${w.id}')">Close Now</button>` : ''}</td>
+                  </tr>`;
+                }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Window History / Activity -->
+    <div class="card">
+      <div class="card-header">
+        <div><div class="card-title">📊 Reporting Activity This Period</div></div>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>User</th><th>Role</th><th>Facility/Level</th><th>Can Submit Now</th><th>Last Report</th></tr></thead>
+          <tbody>
+            ${DB.get('users').filter(u => ['facility','district','province'].includes(u.role) && u.status === 'active').map(u => {
+              const canNow = DB.isReportWindowOpen(u.id);
+              const lastReport = DB.get('reports').filter(r => r.submittedBy === u.id).sort((a,b)=>new Date(b.submittedAt)-new Date(a.submittedAt))[0];
+              return `<tr>
+                <td class="fw-600 text-sm">${UI.escHtml(u.name)}</td>
+                <td><span class="badge ${UI.roleBadgeClass(u.role)}">${UI.roleLabel(u.role)}</span></td>
+                <td class="text-sm text-muted">${u.facilityId ? UI.escHtml(DB.getFacilityName(u.facilityId)) : u.districtId ? UI.escHtml(DB.getDistrictName(u.districtId)) : '—'}</td>
+                <td>${canNow ? '<span class="badge badge-green">✅ Yes</span>' : '<span class="badge badge-red">🔒 No</span>'}</td>
+                <td class="text-sm text-muted">${lastReport ? `${lastReport.period} — ${UI.statusBadge(lastReport.status)}` : '—'}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Reopen Modal -->
+    <div class="modal-overlay" id="modal-reopen">
+      <div class="modal">
+        <div class="modal-header">
+          <span class="modal-title">🔓 Reopen Report Window</span>
+          <button class="modal-close" onclick="UI.closeModal('modal-reopen')">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-warning">
+            <span class="alert-icon">⚠️</span>
+            <div>You are manually opening the report window for a specific user. A closing date is required — the window will auto-close on that date.</div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">User <span class="required">*</span></label>
+            <select id="reopen-user" class="form-control">
+              <option value="">— Select user —</option>
+              ${DB.get('users').filter(u => ['facility','district','province'].includes(u.role) && u.status === 'active')
+                .map(u => `<option value="${u.id}">${UI.escHtml(u.name)} (${UI.roleLabel(u.role)})</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Window Closes On <span class="required">*</span></label>
+            <input type="date" id="reopen-close-date" class="form-control" min="${new Date().toISOString().split('T')[0]}">
+            <div class="form-hint">The report window will automatically close at end of this date.</div>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Reason / Note</label>
+            <input type="text" id="reopen-note" class="form-control" placeholder="e.g. System error during submission, late report approved">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="UI.closeModal('modal-reopen')">Cancel</button>
+          <button class="btn btn-primary" onclick="createReopenWindow()">🔓 Open Window</button>
+        </div>
+      </div>
+    </div>
+  `);
+}
+
+function createReopenWindow() {
+  const userId    = document.getElementById('reopen-user').value;
+  const closeDate = document.getElementById('reopen-close-date').value;
+  const note      = document.getElementById('reopen-note').value.trim();
+
+  if (!userId)    { UI.toast('Please select a user.', 'error'); return; }
+  if (!closeDate) { UI.toast('Please set a closing date.', 'error'); return; }
+
+  DB.add('reportWindows', {
+    id: DB.genId('rw'),
+    type: 'custom',
+    isOpen: true,
+    reopenedBy: user.id,
+    reopenedFor: userId,
+    reopenCloseDate: closeDate,
+    openedAt: new Date().toISOString(),
+    note
+  });
+
+  UI.closeModal('modal-reopen');
+  UI.toast(`Report window opened for ${DB.getUserName(userId)}. Auto-closes on ${closeDate}.`, 'success', 5000);
+  renderPage();
+}
+
+function closeWindow(id) {
+  if (!confirm('Close this report window now?')) return;
+  DB.update('reportWindows', id, { isOpen: false });
+  UI.toast('Report window closed.', 'warning');
+  renderPage();
+}
+
+renderPage();
+</script>
+</body>
+</html>

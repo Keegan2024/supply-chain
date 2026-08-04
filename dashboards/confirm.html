@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Delivery Assignment — SupplyNC</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <style>
+    body { background: var(--blue-900); display:flex; align-items:center; justify-content:center; min-height:100vh; padding:20px; }
+    .wrap { width:100%; max-width:500px; }
+    .brand { text-align:center; margin-bottom:28px; color:white; }
+    .brand .icon { font-size:2.5rem; margin-bottom:8px; }
+    .brand h1 { font-size:1.5rem; font-weight:700; }
+    .brand p  { font-size:.85rem; opacity:.6; }
+    .card-inner { background:white; border-radius:var(--radius-lg); padding:32px; box-shadow:var(--shadow-lg); }
+    .status-icon { font-size:3rem; text-align:center; margin-bottom:16px; }
+    .outcome { text-align:center; padding:24px; border-radius:var(--radius-md); margin-top:20px; }
+    .outcome.accepted { background:var(--green-100); color:var(--green-600); }
+    .outcome.rejected { background:var(--red-100); color:var(--red-600); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="brand">
+      <div class="icon">⛓️</div>
+      <h1>SupplyNC</h1>
+      <p>Delivery Assignment</p>
+    </div>
+
+    <div class="card-inner" id="main-card">
+      <!-- Loading state -->
+      <div id="state-loading" style="text-align:center;padding:32px 0">
+        <div style="font-size:2rem;margin-bottom:12px">⏳</div>
+        <p class="text-muted">Loading delivery details…</p>
+      </div>
+
+      <!-- Delivery details -->
+      <div id="state-details" style="display:none">
+        <h2 style="font-size:1.1rem;font-weight:600;margin-bottom:4px">Delivery Assignment</h2>
+        <p class="text-muted text-sm mb-16">You have been assigned to transport commodities. Please review and respond.</p>
+        <div id="delivery-info" style="background:var(--slate-50);border-radius:var(--radius-sm);padding:16px;margin-bottom:20px"></div>
+        <div class="alert alert-warning">
+          <span class="alert-icon">⚠️</span>
+          <div>By accepting, you confirm you are available and able to transport these commodities as specified.</div>
+        </div>
+        <div style="display:flex;gap:12px">
+          <button class="btn btn-danger w-full btn-lg" onclick="respond('reject')">✕ Decline Assignment</button>
+          <button class="btn btn-success w-full btn-lg" onclick="respond('accept')">✓ Accept Assignment</button>
+        </div>
+      </div>
+
+      <!-- Outcome -->
+      <div id="state-outcome" style="display:none">
+        <div class="status-icon" id="outcome-icon"></div>
+        <div class="outcome" id="outcome-box">
+          <div style="font-size:1.1rem;font-weight:700;margin-bottom:8px" id="outcome-title"></div>
+          <div class="text-sm" id="outcome-msg"></div>
+        </div>
+        <div class="alert alert-info mt-16" style="margin-bottom:0">
+          <span class="alert-icon">ℹ️</span>
+          <div>The sending party has been notified of your response.</div>
+        </div>
+      </div>
+
+      <!-- Not found -->
+      <div id="state-notfound" style="display:none;text-align:center;padding:32px 0">
+        <div style="font-size:2.5rem;margin-bottom:12px">🔍</div>
+        <h3 class="fw-600">Delivery Not Found</h3>
+        <p class="text-muted text-sm mt-8">This link may have expired or the delivery may have already been actioned.</p>
+      </div>
+    </div>
+  </div>
+
+<script src="../assets/js/mock-data.js"></script>
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const reqId  = params.get('req');
+  let req      = null;
+
+  function init() {
+    setTimeout(() => {
+      if (reqId) {
+        req = DB.getOne('requisitions', reqId);
+      } else {
+        // Demo: use most recent dispatched requisition
+        req = DB.get('requisitions').find(r => r.status === 'dispatched' && !r.transporterConfirmed);
+      }
+
+      document.getElementById('state-loading').style.display = 'none';
+
+      if (!req) {
+        document.getElementById('state-notfound').style.display = 'block';
+        return;
+      }
+
+      if (req.transporterConfirmed) {
+        showOutcome('accepted');
+        return;
+      }
+
+      const fromLabel = getLevelLabel(req.fromLevel, req.fromId);
+      const toLabel   = getLevelLabel(req.toLevel, req.toId);
+
+      document.getElementById('delivery-info').innerHTML = `
+        <div style="display:grid;gap:10px">
+          <div style="display:flex;justify-content:space-between"><span class="text-sm text-muted">Ref #</span><span class="fw-600 text-sm td-mono">REQ-${req.id.slice(-8).toUpperCase()}</span></div>
+          <div style="display:flex;justify-content:space-between"><span class="text-sm text-muted">From</span><span class="fw-600 text-sm">${escHtml(fromLabel)}</span></div>
+          <div style="display:flex;justify-content:space-between"><span class="text-sm text-muted">To</span><span class="fw-600 text-sm">${escHtml(toLabel)}</span></div>
+          <div style="display:flex;justify-content:space-between"><span class="text-sm text-muted">Assigned To</span><span class="fw-600 text-sm">${escHtml(req.transporterName)}</span></div>
+          <div style="border-top:1px solid var(--slate-200);padding-top:10px;margin-top:4px">
+            <div class="text-xs text-muted mb-8">COMMODITIES TO TRANSPORT</div>
+            ${req.items.map(i => `
+              <div style="display:flex;justify-content:space-between;padding:4px 0">
+                <span class="text-sm">${escHtml(getCommodityName(i.commodityId))}</span>
+                <span class="fw-600 text-sm">${i.approvedQty !== null ? i.approvedQty : i.requestedQty} ${i.unit}</span>
+              </div>`).join('')}
+          </div>
+        </div>
+      `;
+
+      document.getElementById('state-details').style.display = 'block';
+    }, 700);
+  }
+
+  function respond(action) {
+    if (!req) return;
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = action === 'accept' ? 'Accepting…' : 'Declining…';
+
+    setTimeout(() => {
+      if (action === 'accept') {
+        DB.update('requisitions', req.id, { transporterConfirmed: true });
+        DB.add('auditLog', {
+          id: DB.genId('log'), action: 'transporter_accepted',
+          userId: null, details: `${req.transporterName} accepted delivery REQ-${req.id.slice(-8).toUpperCase()}`,
+          timestamp: new Date().toISOString()
+        });
+        showOutcome('accepted');
+      } else {
+        DB.update('requisitions', req.id, { transporterConfirmed: false, status: 'pending', senderConfirmed: false });
+        DB.add('auditLog', {
+          id: DB.genId('log'), action: 'transporter_rejected',
+          userId: null, details: `${req.transporterName} declined delivery REQ-${req.id.slice(-8).toUpperCase()}`,
+          timestamp: new Date().toISOString()
+        });
+        showOutcome('rejected');
+      }
+    }, 800);
+  }
+
+  function showOutcome(type) {
+    document.getElementById('state-details').style.display = 'none';
+    document.getElementById('state-loading').style.display = 'none';
+    const icon  = document.getElementById('outcome-icon');
+    const box   = document.getElementById('outcome-box');
+    const title = document.getElementById('outcome-title');
+    const msg   = document.getElementById('outcome-msg');
+
+    if (type === 'accepted') {
+      icon.textContent = '✅';
+      box.className = 'outcome accepted';
+      title.textContent = 'Assignment Accepted!';
+      msg.textContent = 'Thank you for accepting this delivery. The sender and receiver have been notified. Please collect the commodities from the dispatch location.';
+    } else {
+      icon.textContent = '❌';
+      box.className = 'outcome rejected';
+      title.textContent = 'Assignment Declined';
+      msg.textContent = 'You have declined this assignment. The sending party has been notified and will reassign to another transporter.';
+    }
+
+    document.getElementById('state-outcome').style.display = 'block';
+  }
+
+  function getLevelLabel(level, id) {
+    if (level === 'facility') return getCommodityName ? DB.getFacilityName(id) : id;
+    if (level === 'district') { const d = DB.getOne('districts', id); return d ? d.name + ' District' : id; }
+    if (level === 'province') { const p = DB.getOne('provinces', id); return p ? p.name + ' Province' : id; }
+    if (level === 'hq')       return 'Headquarters (HQ)';
+    return id;
+  }
+
+  function getCommodityName(id) {
+    const c = DB.getOne('commodities', id);
+    return c ? c.name : id;
+  }
+
+  function escHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  init();
+</script>
+</body>
+</html>

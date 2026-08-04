@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Facility Stock — SupplyNC</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<script src="../assets/js/mock-data.js"></script>
+<script src="../assets/js/auth.js"></script>
+<script>
+Auth.requireLogin();
+if (!Auth.can('viewFacilityStock')) { alert('Access denied.'); Auth.redirectToDashboard(); }
+
+const user = Auth.getUser();
+const role = user.role;
+
+function getFacilities() {
+  if (role === 'district') return DB.get('facilities').filter(f => f.districtId === user.districtId);
+  if (role === 'province') {
+    const distIds = DB.get('districts').filter(d => d.provinceId === user.provinceId).map(d => d.id);
+    return DB.get('facilities').filter(f => distIds.includes(f.districtId));
+  }
+  return DB.get('facilities');
+}
+
+let selectedFacilityId = null;
+
+function renderPage() {
+  const facilities   = getFacilities();
+  const commodities  = DB.get('commodities');
+  const today        = new Date();
+  const in30         = new Date(today.getTime() + 30*24*60*60*1000);
+
+  // Aggregate stats across all facilities
+  const allStock = DB.get('facilityStock').filter(s =>
+    facilities.some(f => f.id === s.facilityId)
+  );
+  const totalLow = allStock.filter(s => {
+    const c = DB.getOne('commodities', s.commodityId);
+    return c && s.closingBalance < c.minThreshold;
+  }).length;
+  const totalExpiring = allStock.filter(s => s.expiryDate && new Date(s.expiryDate) <= in30 && new Date(s.expiryDate) >= today).length;
+
+  UI.shell('Facility Stock', 'facility-stock', `
+    <div class="mb-16">
+      <h2 class="fw-700" style="font-size:1.1rem">Facility Stock Overview</h2>
+      <div class="text-muted text-sm">${facilities.length} facilities · ${allStock.length} total stock lines</div>
+    </div>
+
+    ${totalLow > 0 ? `<div class="alert alert-warning"><span class="alert-icon">⚠️</span><div><strong>${totalLow} stock line${totalLow>1?'s':''} below threshold across facilities.</strong></div></div>` : ''}
+    ${totalExpiring > 0 ? `<div class="alert alert-danger"><span class="alert-icon">🕐</span><div><strong>${totalExpiring} item${totalExpiring>1?'s':''} expiring within 30 days across facilities.</strong></div></div>` : ''}
+
+    <!-- Stats -->
+    <div class="stats-grid mb-16">
+      <div class="stat-card"><div class="stat-icon blue">🏥</div><div><div class="stat-value">${facilities.length}</div><div class="stat-label">Facilities</div></div></div>
+      <div class="stat-card"><div class="stat-icon teal">📦</div><div><div class="stat-value">${allStock.length}</div><div class="stat-label">Stock Lines</div></div></div>
+      <div class="stat-card"><div class="stat-icon ${totalLow>0?'red':'green'}">⚠️</div><div><div class="stat-value">${totalLow}</div><div class="stat-label">Low Stock Alerts</div></div></div>
+      <div class="stat-card"><div class="stat-icon ${totalExpiring>0?'amber':'green'}">🕐</div><div><div class="stat-value">${totalExpiring}</div><div class="stat-label">Expiring Soon</div></div></div>
+    </div>
+
+    <!-- Facility Selector & Commodity Filter -->
+    <div class="card mb-16">
+      <div class="card-body" style="padding:14px 20px">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <select id="facility-sel" class="form-control" style="width:280px" onchange="selectedFacilityId=this.value;renderFacilityStock()">
+            <option value="">— All Facilities —</option>
+            ${facilities.map(f=>`<option value="${f.id}">${UI.escHtml(f.name)}</option>`).join('')}
+          </select>
+          <select id="cat-sel" class="form-control" style="width:160px" onchange="renderFacilityStock()">
+            <option value="">All Categories</option>
+            <option value="Medical">Medical</option>
+            <option value="Non-Medical">Non-Medical</option>
+          </select>
+          <input type="text" id="com-search" class="form-control" style="width:200px" placeholder="Search commodity…" oninput="renderFacilityStock()">
+        </div>
+      </div>
+    </div>
+
+    <!-- Facility Cards / Table -->
+    <div id="facility-stock-content">
+      ${renderFacilitySummaryCards(facilities)}
+    </div>
+
+    <!-- Detail Modal -->
+    <div class="modal-overlay" id="modal-facility">
+      <div class="modal modal-xl">
+        <div class="modal-header">
+          <span class="modal-title" id="modal-fac-title">Facility Stock Detail</span>
+          <button class="modal-close" onclick="UI.closeModal('modal-facility')">✕</button>
+        </div>
+        <div class="modal-body" id="modal-fac-body"></div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="UI.closeModal('modal-facility')">Close</button>
+        </div>
+      </div>
+    </div>
+  `);
+}
+
+function renderFacilitySummaryCards(facilities) {
+  const today = new Date();
+  const in30  = new Date(today.getTime() + 30*24*60*60*1000);
+
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px">
+    ${facilities.map(f => {
+      const fStock = DB.get('facilityStock').filter(s => s.facilityId === f.id);
+      const fLow   = fStock.filter(s => { const c = DB.getOne('commodities',s.commodityId); return c && s.closingBalance < c.minThreshold; });
+      const fExp   = fStock.filter(s => s.expiryDate && new Date(s.expiryDate) <= in30 && new Date(s.expiryDate) >= today);
+      return `<div class="card">
+        <div class="card-header" style="padding:14px 18px">
+          <div>
+            <div class="fw-600 text-sm">${UI.escHtml(f.name)}</div>
+            <div class="text-xs text-muted">${f.code} · ${f.type} · ${DB.getDistrictName(f.districtId)}</div>
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="viewFacilityDetail('${f.id}')">View Detail</button>
+        </div>
+        <div class="card-body" style="padding:14px 18px">
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">
+            <div style="text-align:center;padding:8px;background:var(--slate-50);border-radius:var(--radius-sm)">
+              <div class="fw-700">${fStock.length}</div><div class="text-xs text-muted">Lines</div>
+            </div>
+            <div style="text-align:center;padding:8px;background:${fLow.length>0?'var(--red-100)':'var(--slate-50)'};border-radius:var(--radius-sm)">
+              <div class="fw-700 ${fLow.length>0?'text-danger':''}">${fLow.length}</div><div class="text-xs text-muted">Low Stock</div>
+            </div>
+            <div style="text-align:center;padding:8px;background:${fExp.length>0?'var(--amber-100)':'var(--slate-50)'};border-radius:var(--radius-sm)">
+              <div class="fw-700 ${fExp.length>0?'text-amber-600':''}">${fExp.length}</div><div class="text-xs text-muted">Expiring</div>
+            </div>
+          </div>
+          ${fStock.slice(0,3).map(s => {
+            const com  = DB.getOne('commodities', s.commodityId);
+            const isLow = com && s.closingBalance < com.minThreshold;
+            return `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--slate-100)">
+              <div class="text-sm">${UI.escHtml(DB.getCommodityName(s.commodityId))}</div>
+              <span class="fw-600 text-sm ${isLow?'text-danger':'text-success'}">${s.closingBalance.toLocaleString()} ${com?.unit||''}</span>
+            </div>`;
+          }).join('')}
+          ${fStock.length > 3 ? `<div class="text-xs text-muted mt-8">+${fStock.length-3} more commodities</div>` : ''}
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function renderFacilityStock() {
+  const facId = document.getElementById('facility-sel').value;
+  const cat   = document.getElementById('cat-sel').value;
+  const q     = document.getElementById('com-search').value.toLowerCase();
+  const facilities = getFacilities();
+
+  if (!facId) {
+    document.getElementById('facility-stock-content').innerHTML = renderFacilitySummaryCards(facilities);
+    return;
+  }
+
+  const fac    = DB.getOne('facilities', facId);
+  const stock  = DB.get('facilityStock').filter(s => s.facilityId === facId);
+  const today  = new Date();
+  const in30   = new Date(today.getTime() + 30*24*60*60*1000);
+
+  const filtered = stock.filter(s => {
+    const com = DB.getOne('commodities', s.commodityId);
+    if (cat && com?.category !== cat) return false;
+    if (q && !DB.getCommodityName(s.commodityId).toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  document.getElementById('facility-stock-content').innerHTML = `
+    <div class="card">
+      <div class="card-header">
+        <div><div class="card-title">${UI.escHtml(fac?.name||'')}</div><div class="card-subtitle">${filtered.length} commodity lines</div></div>
+        <button class="btn btn-teal btn-sm" onclick="dispatchTo('${facId}')">📤 Dispatch to Facility</button>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr>
+            <th>Commodity</th><th>Category</th><th>Batch</th>
+            <th>Received</th><th>Consumed</th><th>Balance</th><th>Unit</th><th>Expiry</th><th>Status</th>
+          </tr></thead>
+          <tbody>
+            ${filtered.length === 0
+              ? `<tr><td colspan="9"><div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No stock</div></div></td></tr>`
+              : filtered.map(s => {
+                  const com    = DB.getOne('commodities', s.commodityId);
+                  const isLow  = com && s.closingBalance < com.minThreshold;
+                  const exDate = s.expiryDate ? new Date(s.expiryDate) : null;
+                  const isExp  = exDate && exDate <= in30 && exDate >= today;
+                  const isExpired = exDate && exDate < today;
+                  const badge  = isExpired ? '<span class="badge badge-red">Expired</span>'
+                    : isLow ? '<span class="badge badge-red">Low</span>'
+                    : isExp ? '<span class="badge badge-amber">Expiring</span>'
+                    : '<span class="badge badge-green">OK</span>';
+                  return `<tr>
+                    <td class="fw-600 text-sm">${UI.escHtml(DB.getCommodityName(s.commodityId))}</td>
+                    <td><span class="badge ${com?.category==='Medical'?'badge-blue':'badge-slate'}">${com?.category||'—'}</span></td>
+                    <td class="td-mono text-sm text-muted">${s.batchNo||'—'}</td>
+                    <td>${s.received}</td>
+                    <td class="text-danger">${s.consumed}</td>
+                    <td><span class="fw-700 ${isLow?'text-danger':'text-success'}">${s.closingBalance.toLocaleString()}</span></td>
+                    <td class="text-sm text-muted">${com?.unit||'—'}</td>
+                    <td class="text-sm ${isExpired?'text-danger':isExp?'':''}">${s.expiryDate?UI.formatDate(s.expiryDate):'—'}</td>
+                    <td>${badge}</td>
+                  </tr>`;
+                }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function viewFacilityDetail(facId) {
+  document.getElementById('facility-sel').value = facId;
+  selectedFacilityId = facId;
+  renderFacilityStock();
+  window.scrollTo({ top: document.getElementById('facility-stock-content').offsetTop - 20, behavior: 'smooth' });
+}
+
+function dispatchTo(facId) {
+  window.location.href = `../requisitions/request.html?dispatch=${facId}`;
+}
+
+renderPage();
+</script>
+</body>
+</html>

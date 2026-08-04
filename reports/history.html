@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Report History — SupplyNC</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<script src="../assets/js/mock-data.js"></script>
+<script src="../assets/js/auth.js"></script>
+<script>
+Auth.requireLogin();
+
+const user = Auth.getUser();
+const role = user.role;
+
+function getReports() {
+  const all = DB.get('reports');
+  if (role === 'facility')  return all.filter(r => r.submittedBy === user.id);
+  if (role === 'district')  return all.filter(r => r.districtId === user.districtId);
+  if (role === 'province') {
+    const distIds = DB.get('districts').filter(d => d.provinceId === user.provinceId).map(d => d.id);
+    return all.filter(r => distIds.includes(r.districtId));
+  }
+  return all; // hq, admin
+}
+
+function renderPage() {
+  const reports = getReports();
+
+  // Filter state
+  const statusFilter = window._statusFilter || 'all';
+  const searchQ      = window._searchQ || '';
+
+  const filtered = reports.filter(r => {
+    const matchStatus = statusFilter === 'all' || r.status === statusFilter;
+    const matchSearch = !searchQ || r.period.toLowerCase().includes(searchQ.toLowerCase())
+      || DB.getFacilityName(r.facilityId).toLowerCase().includes(searchQ.toLowerCase());
+    return matchStatus && matchSearch;
+  });
+
+  const counts = {
+    all: reports.length,
+    pending: reports.filter(r => r.status === 'pending').length,
+    approved: reports.filter(r => r.status === 'approved').length,
+    rejected: reports.filter(r => r.status === 'rejected').length,
+    withdrawn: reports.filter(r => r.status === 'withdrawn').length
+  };
+
+  UI.shell('Report History', 'report-history', `
+    <div class="d-flex justify-between align-center mb-16">
+      <div>
+        <h2 class="fw-700" style="font-size:1.1rem">Report History</h2>
+        <div class="text-muted text-sm">${filtered.length} of ${reports.length} reports shown</div>
+      </div>
+      ${Auth.can('submitReports') ? `<a href="submit.html" class="btn btn-primary">+ New Report</a>` : ''}
+    </div>
+
+    <!-- Filter Bar -->
+    <div class="card mb-16">
+      <div class="card-body" style="padding:14px 20px">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <input type="text" class="form-control" style="width:220px" placeholder="Search period or facility…"
+            value="${searchQ}" oninput="window._searchQ=this.value;renderPage()">
+          <div style="display:flex;gap:6px">
+            ${['all','pending','approved','rejected','withdrawn'].map(s => `
+              <button class="btn btn-sm ${statusFilter === s ? 'btn-primary' : 'btn-outline'}"
+                onclick="window._statusFilter='${s}';renderPage()">
+                ${s.charAt(0).toUpperCase()+s.slice(1)} <span style="opacity:.7">(${counts[s]})</span>
+              </button>`).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Reports Table -->
+    <div class="card">
+      <div class="table-wrapper">
+        <table>
+          <thead><tr>
+            <th>Period</th>
+            <th>Facility</th>
+            ${role !== 'facility' ? '<th>District</th>' : ''}
+            <th>Submitted By</th>
+            <th>Submitted</th>
+            <th>Reviewed By</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr></thead>
+          <tbody>
+            ${filtered.length === 0
+              ? `<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No reports found</div><div class="empty-desc">Try adjusting your filters.</div></div></td></tr>`
+              : filtered.sort((a,b) => new Date(b.submittedAt)-new Date(a.submittedAt)).map(r => {
+                  const canWithdraw = r.status === 'pending' && r.submittedBy === user.id;
+                  const canDelete   = r.status === 'rejected' && (r.submittedBy === user.id || role === 'admin');
+                  return `<tr>
+                    <td class="fw-600">${r.period}</td>
+                    <td class="text-sm">${UI.escHtml(DB.getFacilityName(r.facilityId))}</td>
+                    ${role !== 'facility' ? `<td class="text-sm text-muted">${UI.escHtml(DB.getDistrictName(r.districtId))}</td>` : ''}
+                    <td class="text-sm">${UI.escHtml(DB.getUserName(r.submittedBy))}</td>
+                    <td class="text-sm text-muted">${UI.formatDateTime(r.submittedAt)}</td>
+                    <td class="text-sm">${r.reviewedBy ? UI.escHtml(DB.getUserName(r.reviewedBy)) : '<span class="text-muted">—</span>'}</td>
+                    <td>
+                      ${UI.statusBadge(r.status)}
+                      ${r.rejectionReason ? `<div class="text-xs text-danger mt-8" style="max-width:140px;margin-top:4px">Reason: ${UI.escHtml(r.rejectionReason)}</div>` : ''}
+                    </td>
+                    <td>
+                      <div style="display:flex;gap:6px;flex-wrap:wrap">
+                        <button class="btn btn-outline btn-sm" onclick="viewReport('${r.id}')">👁 View</button>
+                        ${canWithdraw ? `<button class="btn btn-ghost btn-sm" onclick="withdrawReport('${r.id}')">↩️ Withdraw</button>` : ''}
+                        ${canDelete   ? `<button class="btn btn-danger btn-sm" onclick="deleteReport('${r.id}')">🗑 Delete</button>` : ''}
+                      </div>
+                    </td>
+                  </tr>`;
+                }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- View Report Modal -->
+    <div class="modal-overlay" id="modal-view">
+      <div class="modal modal-xl">
+        <div class="modal-header">
+          <span class="modal-title" id="modal-view-title">Report Details</span>
+          <button class="modal-close" onclick="UI.closeModal('modal-view')">✕</button>
+        </div>
+        <div class="modal-body" id="modal-view-body"></div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="UI.closeModal('modal-view')">Close</button>
+        </div>
+      </div>
+    </div>
+  `);
+}
+
+function viewReport(id) {
+  const r = DB.getOne('reports', id);
+  if (!r) return;
+  document.getElementById('modal-view-title').textContent = `Report — ${r.period} · ${DB.getFacilityName(r.facilityId)}`;
+  document.getElementById('modal-view-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:20px">
+      <div><div class="text-xs text-muted">Period</div><div class="fw-600">${r.period}</div></div>
+      <div><div class="text-xs text-muted">Status</div><div>${UI.statusBadge(r.status)}</div></div>
+      <div><div class="text-xs text-muted">Submitted</div><div class="text-sm">${UI.formatDateTime(r.submittedAt)}</div></div>
+      <div><div class="text-xs text-muted">Submitted By</div><div class="text-sm">${UI.escHtml(DB.getUserName(r.submittedBy))}</div></div>
+      <div><div class="text-xs text-muted">Reviewed By</div><div class="text-sm">${r.reviewedBy ? UI.escHtml(DB.getUserName(r.reviewedBy)) : '—'}</div></div>
+      ${r.rejectionReason ? `<div><div class="text-xs text-muted">Rejection Reason</div><div class="text-sm text-danger">${UI.escHtml(r.rejectionReason)}</div></div>` : ''}
+    </div>
+    <div class="table-wrapper">
+      <table>
+        <thead><tr>
+          <th>Commodity</th><th>Opening</th><th>Received</th>
+          <th>Consumed</th><th>Given Away</th><th>Expired</th><th>Damaged/Lost</th>
+          <th style="background:var(--blue-50)">Closing Balance</th>
+        </tr></thead>
+        <tbody>
+          ${(r.items || []).map(item => `<tr>
+            <td class="fw-600 text-sm">${UI.escHtml(DB.getCommodityName(item.commodityId))}</td>
+            <td>${item.openingBalance}</td>
+            <td>${item.received}</td>
+            <td class="text-danger">${item.consumed}</td>
+            <td class="text-muted">${item.givenAway}</td>
+            <td class="text-muted">${item.expired}</td>
+            <td class="text-muted">${item.damagedLost}</td>
+            <td style="background:var(--blue-50)"><strong>${item.closingBalance}</strong></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+  UI.openModal('modal-view');
+}
+
+function withdrawReport(id) {
+  if (!confirm('Withdraw this report? It will be returned to draft status. You can resubmit after corrections.')) return;
+  DB.update('reports', id, { status: 'withdrawn', withdrawnAt: new Date().toISOString() });
+  UI.toast('Report withdrawn successfully.', 'success');
+  renderPage();
+}
+
+function deleteReport(id) {
+  if (!confirm('Permanently delete this rejected report? This cannot be undone.')) return;
+  DB.remove('reports', id);
+  UI.toast('Report deleted.', 'warning');
+  renderPage();
+}
+
+renderPage();
+</script>
+</body>
+</html>

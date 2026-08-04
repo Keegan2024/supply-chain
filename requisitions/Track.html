@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Track Deliveries — SupplyNC</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<script src="../assets/js/mock-data.js"></script>
+<script src="../assets/js/auth.js"></script>
+<script>
+Auth.requireLogin();
+
+const user = Auth.getUser();
+const role = user.role;
+
+function getRelevantReqs() {
+  const all = DB.get('requisitions');
+  if (role === 'facility')  return all.filter(r => r.fromId === user.facilityId || r.toId === user.facilityId);
+  if (role === 'district')  return all.filter(r => r.fromId === user.districtId || r.toId === user.districtId);
+  if (role === 'province')  return all.filter(r => r.fromId === user.provinceId || r.toId === user.provinceId);
+  return all;
+}
+
+function getStatusStep(r) {
+  if (r.managerSignOff)      return 5;
+  if (r.receiverConfirmed)   return 4;
+  if (r.transporterConfirmed)return 3;
+  if (r.senderConfirmed)     return 2;
+  if (r.status === 'pending')return 1;
+  if (r.status === 'rejected')return -1;
+  return 0;
+}
+
+function renderPage() {
+  const reqs   = getRelevantReqs();
+  const active  = reqs.filter(r => !['delivered','rejected'].includes(r.status));
+  const completed = reqs.filter(r => r.status === 'delivered');
+  const rejected  = reqs.filter(r => r.status === 'rejected');
+  const tab       = window._tab || 'active';
+
+  const myActions = active.filter(r => {
+    const step = getStatusStep(r);
+    const isReceiver = (r.toLevel === role) || (role === 'facility' && r.toId === user.facilityId);
+    const isManager  = ['district','province','hq','admin'].includes(role);
+    return (step === 2 && isReceiver && !r.receiverConfirmed) ||
+           (step === 4 && isManager && !r.managerSignOff);
+  });
+
+  UI.shell('Track Deliveries', 'track', `
+    <div class="mb-16">
+      <h2 class="fw-700" style="font-size:1.1rem">Delivery Tracker</h2>
+      <div class="text-muted text-sm">Monitor all commodity movements in real time</div>
+    </div>
+
+    ${myActions.length > 0 ? `
+      <div class="alert alert-warning">
+        <span class="alert-icon">⚡</span>
+        <div><strong>${myActions.length} delivery${myActions.length>1?'ies':''} require your action.</strong> Scroll down to confirm receipt or sign off.</div>
+      </div>` : ''}
+
+    <div class="tabs">
+      <button class="tab-btn ${tab==='active'?'active':''}" onclick="window._tab='active';renderPage()">🚚 Active (${active.length})</button>
+      <button class="tab-btn ${tab==='completed'?'active':''}" onclick="window._tab='completed';renderPage()">✅ Completed (${completed.length})</button>
+      <button class="tab-btn ${tab==='rejected'?'active':''}" onclick="window._tab='rejected';renderPage()">❌ Rejected (${rejected.length})</button>
+    </div>
+
+    ${(tab === 'active' ? active : tab === 'completed' ? completed : rejected).length === 0
+      ? `<div class="card"><div class="card-body"><div class="empty-state"><div class="empty-icon">📦</div><div class="empty-title">No deliveries here</div></div></div></div>`
+      : (tab === 'active' ? active : tab === 'completed' ? completed : rejected)
+          .sort((a,b) => new Date(b.requestedAt) - new Date(a.requestedAt))
+          .map(r => renderDeliveryCard(r)).join('')}
+  `);
+}
+
+function renderDeliveryCard(r) {
+  const step = getStatusStep(r);
+  const fromLabel = getLevelLabel(r.fromLevel, r.fromId);
+  const toLabel   = getLevelLabel(r.toLevel, r.toId);
+  const isReceiver = (r.toLevel === role) || (role === 'facility' && r.toId === user.facilityId);
+  const isManager  = ['district','province','hq','admin'].includes(role);
+
+  const steps = [
+    { label: 'Requested',         done: step >= 1, active: step === 1 },
+    { label: 'Dispatched',        done: step >= 2, active: step === 2 },
+    { label: 'Transporter ✓',     done: step >= 3, active: step === 2 && r.senderConfirmed && !r.transporterConfirmed },
+    { label: 'Delivered',         done: step >= 4, active: step === 3 },
+    { label: 'Manager Sign-off',  done: step >= 5, active: step === 4 }
+  ];
+
+  const needsReceiverAction = r.status === 'dispatched' && r.transporterConfirmed && !r.receiverConfirmed && isReceiver;
+  const needsManagerAction  = r.receiverConfirmed && !r.managerSignOff && isManager;
+
+  return `
+    <div class="card mb-16">
+      <div class="card-header">
+        <div>
+          <div class="fw-600">REQ-${r.id.slice(-8).toUpperCase()}</div>
+          <div class="text-sm text-muted">${UI.escHtml(fromLabel)} → ${UI.escHtml(toLabel)}</div>
+        </div>
+        <div class="d-flex gap-8 align-center">
+          ${UI.statusBadge(r.status)}
+          <span class="text-xs text-muted">${UI.formatDate(r.requestedAt)}</span>
+        </div>
+      </div>
+      <div class="card-body">
+        <!-- Tracker -->
+        <div class="delivery-track mb-16">
+          ${steps.map(s => `
+            <div class="track-step ${s.done?'done':s.active?'active':''}">
+              <div class="track-dot">${s.done ? '✓' : s.active ? '●' : ''}</div>
+              <div class="track-label">${s.label}</div>
+            </div>`).join('')}
+        </div>
+
+        <!-- Items & Details -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+          <div>
+            <div class="text-xs text-muted mb-8">COMMODITIES</div>
+            ${r.items.map(i => `
+              <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--slate-100)">
+                <span class="text-sm">${UI.escHtml(DB.getCommodityName(i.commodityId))}</span>
+                <span class="text-sm fw-600">
+                  ${i.approvedQty !== null ? i.approvedQty : i.requestedQty} ${i.unit}
+                  ${i.approvedQty !== null && i.approvedQty < i.requestedQty
+                    ? `<span class="text-muted" style="font-weight:400"> (requested: ${i.requestedQty})</span>` : ''}
+                </span>
+              </div>`).join('')}
+          </div>
+          <div>
+            <div class="text-xs text-muted mb-8">LOGISTICS</div>
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div class="d-flex justify-between text-sm">
+                <span class="text-muted">Requested by</span>
+                <span class="fw-600">${UI.escHtml(DB.getUserName(r.requestedBy))}</span>
+              </div>
+              ${r.transporterName ? `
+                <div class="d-flex justify-between text-sm">
+                  <span class="text-muted">Transporter</span>
+                  <span class="fw-600">${UI.escHtml(r.transporterName)}</span>
+                </div>
+                <div class="d-flex justify-between text-sm">
+                  <span class="text-muted">Transporter Status</span>
+                  <span>${r.transporterConfirmed ? '<span class="badge badge-green">✓ Accepted</span>' : '<span class="badge badge-amber">⏳ Pending</span>'}</span>
+                </div>` : ''}
+              ${r.dispatchedAt ? `
+                <div class="d-flex justify-between text-sm">
+                  <span class="text-muted">Dispatched</span>
+                  <span>${UI.formatDate(r.dispatchedAt)}</span>
+                </div>` : ''}
+              ${r.receivedAt ? `
+                <div class="d-flex justify-between text-sm">
+                  <span class="text-muted">Received</span>
+                  <span class="text-success fw-600">${UI.formatDate(r.receivedAt)}</span>
+                </div>` : ''}
+              ${r.note ? `
+                <div class="text-sm">
+                  <span class="text-muted">Note: </span>${UI.escHtml(r.note)}
+                </div>` : ''}
+            </div>
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        ${needsReceiverAction ? `
+          <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--slate-100)">
+            <div class="alert alert-info" style="margin-bottom:12px">
+              <span class="alert-icon">📦</span>
+              <div><strong>Action required:</strong> Confirm that you have received this delivery.</div>
+            </div>
+            <button class="btn btn-success" onclick="confirmReceive('${r.id}')">✅ Confirm Receipt</button>
+          </div>` : ''}
+        ${needsManagerAction ? `
+          <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--slate-100)">
+            <div class="alert alert-info" style="margin-bottom:12px">
+              <span class="alert-icon">✍️</span>
+              <div><strong>Action required:</strong> Provide manager sign-off to complete this delivery.</div>
+            </div>
+            <button class="btn btn-teal" onclick="managerSignOff('${r.id}')">✍️ Manager Sign-off & Complete</button>
+          </div>` : ''}
+        ${!r.transporterConfirmed && r.senderConfirmed ? `
+          <div style="margin-top:12px">
+            <div class="alert alert-warning" style="margin-bottom:0">
+              <span class="alert-icon">⏳</span>
+              <div>Waiting for <strong>${UI.escHtml(r.transporterName||'transporter')}</strong> to accept the delivery assignment via email.</div>
+            </div>
+          </div>` : ''}
+      </div>
+    </div>`;
+}
+
+function confirmReceive(id) {
+  if (!confirm('Confirm receipt of this delivery? This will update your stock levels.')) return;
+  const r = DB.getOne('requisitions', id);
+  DB.update('requisitions', id, { receiverConfirmed: true, receivedAt: new Date().toISOString(), status: 'received' });
+
+  // Update facility stock
+  if (r && r.toLevel === 'facility') {
+    r.items.forEach(item => {
+      if (item.approvedQty && item.approvedQty > 0) {
+        const existing = DB.get('facilityStock').find(s => s.facilityId === r.toId && s.commodityId === item.commodityId);
+        if (existing) {
+          DB.update('facilityStock', existing.id, {
+            received: (existing.received || 0) + item.approvedQty,
+            closingBalance: existing.closingBalance + item.approvedQty,
+            lastUpdated: new Date().toISOString()
+          });
+        } else {
+          DB.add('facilityStock', {
+            id: DB.genId('fs'), facilityId: r.toId, commodityId: item.commodityId,
+            batchNo: 'DELIVERY', openingBalance: 0, received: item.approvedQty,
+            consumed: 0, givenAway: 0, expired: 0, damagedLost: 0,
+            closingBalance: item.approvedQty, expiryDate: null,
+            lastUpdated: new Date().toISOString()
+          });
+        }
+      }
+    });
+  }
+
+  UI.toast('Receipt confirmed! Stock updated. Awaiting manager sign-off.', 'success', 4000);
+  renderPage();
+}
+
+function managerSignOff(id) {
+  if (!confirm('Provide final sign-off for this delivery? This marks it as fully complete.')) return;
+  DB.update('requisitions', id, { managerSignOff: true, status: 'delivered' });
+  UI.toast('Delivery signed off and marked complete. All parties notified.', 'success');
+  renderPage();
+}
+
+function getLevelLabel(level, id) {
+  if (level === 'facility') return DB.getFacilityName(id);
+  if (level === 'district') return DB.getDistrictName(id) + ' District';
+  if (level === 'province') return DB.getProvinceName(id) + ' Province';
+  if (level === 'hq')       return 'HQ Central';
+  return id;
+}
+
+renderPage();
+</script>
+</body>
+</html>

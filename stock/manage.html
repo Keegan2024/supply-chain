@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Commodities — SupplyNC</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<script src="../assets/js/mock-data.js"></script>
+<script src="../assets/js/auth.js"></script>
+<script>
+Auth.requireLogin();
+if (!Auth.can('addEditCommodities')) { alert('Access denied.'); Auth.redirectToDashboard(); }
+
+const user = Auth.getUser();
+let editingId = null;
+
+function renderPage() {
+  const commodities = DB.get('commodities');
+  const medical     = commodities.filter(c => c.category === 'Medical');
+  const nonMedical  = commodities.filter(c => c.category === 'Non-Medical');
+  const q           = window._q || '';
+  const catFilter   = window._cat || '';
+
+  const filtered = commodities.filter(c =>
+    (!q || c.name.toLowerCase().includes(q.toLowerCase()) || c.unit.toLowerCase().includes(q.toLowerCase())) &&
+    (!catFilter || c.category === catFilter)
+  );
+
+  UI.shell('Commodity Management', 'commodities', `
+    <div class="d-flex justify-between align-center mb-16">
+      <div>
+        <h2 class="fw-700" style="font-size:1.1rem">Commodity Catalogue</h2>
+        <div class="text-muted text-sm">${commodities.length} items · ${medical.length} medical · ${nonMedical.length} non-medical</div>
+      </div>
+      <button class="btn btn-primary" onclick="openAdd()">+ Add Commodity</button>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-grid mb-16">
+      <div class="stat-card"><div class="stat-icon blue">💊</div><div><div class="stat-value">${commodities.length}</div><div class="stat-label">Total Commodities</div></div></div>
+      <div class="stat-card"><div class="stat-icon teal">🏥</div><div><div class="stat-value">${medical.length}</div><div class="stat-label">Medical Items</div></div></div>
+      <div class="stat-card"><div class="stat-icon amber">📦</div><div><div class="stat-value">${nonMedical.length}</div><div class="stat-label">Non-Medical Items</div></div></div>
+    </div>
+
+    <!-- Search & Filter -->
+    <div class="card mb-16">
+      <div class="card-body" style="padding:14px 20px">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <input type="text" class="form-control" style="width:260px" placeholder="Search by name or unit…"
+            value="${q}" oninput="window._q=this.value;renderPage()">
+          <div style="display:flex;gap:6px">
+            ${['','Medical','Non-Medical'].map(c => `
+              <button class="btn btn-sm ${catFilter===c?'btn-primary':'btn-outline'}"
+                onclick="window._cat='${c}';renderPage()">
+                ${c||'All'}
+              </button>`).join('')}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Commodity Table -->
+    <div class="card">
+      <div class="table-wrapper">
+        <table>
+          <thead><tr>
+            <th>Name</th><th>Category</th><th>Unit</th><th>Min. Threshold</th><th>Description</th><th>Added By</th><th>Actions</th>
+          </tr></thead>
+          <tbody>
+            ${filtered.length === 0
+              ? `<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">💊</div><div class="empty-title">No commodities found</div><div class="empty-desc">Add the first commodity to the catalogue.</div></div></td></tr>`
+              : filtered.map(c => `<tr>
+                  <td>
+                    <div class="fw-600 text-sm">${UI.escHtml(c.name)}</div>
+                  </td>
+                  <td><span class="badge ${c.category==='Medical'?'badge-blue':'badge-slate'}">${c.category}</span></td>
+                  <td class="text-sm">${UI.escHtml(c.unit)}</td>
+                  <td class="text-sm">${c.minThreshold ? c.minThreshold.toLocaleString() : '—'}</td>
+                  <td class="text-sm text-muted">${UI.escHtml(c.description||'—')}</td>
+                  <td class="text-sm text-muted">${c.addedBy ? UI.escHtml(DB.getUserName(c.addedBy)) : 'System'}</td>
+                  <td>
+                    <div style="display:flex;gap:6px">
+                      <button class="btn btn-outline btn-sm" onclick="openEdit('${c.id}')">✏️ Edit</button>
+                      <button class="btn btn-danger btn-sm" onclick="deleteCommodity('${c.id}','${UI.escHtml(c.name)}')">🗑</button>
+                    </div>
+                  </td>
+                </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Add/Edit Modal -->
+    <div class="modal-overlay" id="modal-commodity">
+      <div class="modal modal-lg">
+        <div class="modal-header">
+          <span class="modal-title" id="com-modal-title">Add Commodity</span>
+          <button class="modal-close" onclick="UI.closeModal('modal-commodity')">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-row cols-2">
+            <div class="form-group">
+              <label class="form-label">Commodity Name <span class="required">*</span></label>
+              <input type="text" id="com-name" class="form-control" placeholder="e.g. Amoxicillin 500mg Capsules">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Category <span class="required">*</span></label>
+              <select id="com-cat" class="form-control">
+                <option value="">— Select category —</option>
+                <option value="Medical">Medical</option>
+                <option value="Non-Medical">Non-Medical</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row cols-2">
+            <div class="form-group">
+              <label class="form-label">Unit of Measure <span class="required">*</span></label>
+              <input type="text" id="com-unit" class="form-control" placeholder="e.g. Tablets, Capsules, Bottles, Pieces">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Minimum Threshold</label>
+              <input type="number" id="com-threshold" class="form-control" min="0" placeholder="e.g. 500">
+              <div class="form-hint">Alert will trigger when stock falls below this quantity.</div>
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Description / Notes</label>
+            <textarea id="com-desc" class="form-control" rows="2" placeholder="Brief description, e.g. Broad-spectrum antibiotic for bacterial infections"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="UI.closeModal('modal-commodity')">Cancel</button>
+          <button class="btn btn-primary" id="com-save-btn" onclick="saveCommodity()">Save Commodity</button>
+        </div>
+      </div>
+    </div>
+  `);
+}
+
+function openAdd() {
+  editingId = null;
+  document.getElementById('com-modal-title').textContent = 'Add Commodity';
+  document.getElementById('com-save-btn').textContent = 'Add Commodity';
+  ['com-name','com-unit','com-threshold','com-desc'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('com-cat').value = '';
+  UI.openModal('modal-commodity');
+}
+
+function openEdit(id) {
+  editingId = id;
+  const c = DB.getOne('commodities', id);
+  if (!c) return;
+  document.getElementById('com-modal-title').textContent = 'Edit Commodity';
+  document.getElementById('com-save-btn').textContent = 'Save Changes';
+  document.getElementById('com-name').value      = c.name;
+  document.getElementById('com-cat').value       = c.category;
+  document.getElementById('com-unit').value      = c.unit;
+  document.getElementById('com-threshold').value = c.minThreshold || '';
+  document.getElementById('com-desc').value      = c.description || '';
+  UI.openModal('modal-commodity');
+}
+
+function saveCommodity() {
+  const name      = document.getElementById('com-name').value.trim();
+  const category  = document.getElementById('com-cat').value;
+  const unit      = document.getElementById('com-unit').value.trim();
+  const threshold = parseInt(document.getElementById('com-threshold').value) || 0;
+  const desc      = document.getElementById('com-desc').value.trim();
+
+  if (!name)     { UI.toast('Commodity name is required.', 'error'); return; }
+  if (!category) { UI.toast('Please select a category.', 'error'); return; }
+  if (!unit)     { UI.toast('Unit of measure is required.', 'error'); return; }
+
+  const data = { name, category, unit, minThreshold: threshold, description: desc, addedBy: user.id };
+
+  if (editingId) {
+    DB.update('commodities', editingId, data);
+    UI.toast('Commodity updated successfully.', 'success');
+  } else {
+    DB.add('commodities', { id: DB.genId('com'), ...data });
+    UI.toast('Commodity added to catalogue.', 'success');
+  }
+
+  UI.closeModal('modal-commodity');
+  renderPage();
+}
+
+function deleteCommodity(id, name) {
+  if (!confirm(`Delete "${name}" from the catalogue?\n\nThis will not affect existing stock records.`)) return;
+  DB.remove('commodities', id);
+  UI.toast('Commodity removed from catalogue.', 'warning');
+  renderPage();
+}
+
+renderPage();
+</script>
+</body>
+</html>

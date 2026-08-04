@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Review Reports — SupplyNC</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<script src="../assets/js/mock-data.js"></script>
+<script src="../assets/js/auth.js"></script>
+<script>
+Auth.requireLogin();
+if (!Auth.can('reviewReports')) { alert('Access denied.'); Auth.redirectToDashboard(); }
+
+const user = Auth.getUser();
+const role = user.role;
+let selectedReport = null;
+
+function getReports() {
+  const all = DB.get('reports');
+  if (role === 'district') return all.filter(r => r.districtId === user.districtId);
+  if (role === 'province') {
+    const distIds = DB.get('districts').filter(d => d.provinceId === user.provinceId).map(d => d.id);
+    return all.filter(r => distIds.includes(r.districtId));
+  }
+  return all;
+}
+
+function renderPage() {
+  const reports   = getReports();
+  const pending   = reports.filter(r => r.status === 'pending');
+  const reviewed  = reports.filter(r => ['approved','rejected'].includes(r.status));
+  const activeTab = window._tab || 'pending';
+
+  UI.shell('Review Reports', 'review-reports', `
+    <div class="mb-16">
+      <h2 class="fw-700" style="font-size:1.1rem">Report Review</h2>
+      <div class="text-muted text-sm">${pending.length} report${pending.length !== 1 ? 's' : ''} awaiting review</div>
+    </div>
+
+    <div class="tabs" id="review-tabs">
+      <button class="tab-btn ${activeTab==='pending'?'active':''}" data-tab="tab-pending" onclick="window._tab='pending';renderPage()">
+        ⏳ Pending Review <span class="nav-badge" style="position:relative;margin-left:6px;background:var(--amber-600)">${pending.length}</span>
+      </button>
+      <button class="tab-btn ${activeTab==='reviewed'?'active':''}" data-tab="tab-reviewed" onclick="window._tab='reviewed';renderPage()">
+        ✅ Reviewed (${reviewed.length})
+      </button>
+    </div>
+
+    <div id="tab-pending" class="${activeTab==='pending'?'':'d-none'}">
+      ${pending.length === 0
+        ? `<div class="card"><div class="card-body"><div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No pending reports</div><div class="empty-desc">All caught up!</div></div></div></div>`
+        : `<div class="card">
+            <div class="table-wrapper">
+              <table>
+                <thead><tr>
+                  <th>Period</th><th>Facility</th><th>District</th>
+                  <th>Submitted By</th><th>Submitted</th><th>Items</th><th>Actions</th>
+                </tr></thead>
+                <tbody>
+                  ${pending.map(r => `<tr>
+                    <td class="fw-600">${r.period}</td>
+                    <td class="text-sm">${UI.escHtml(DB.getFacilityName(r.facilityId))}</td>
+                    <td class="text-sm text-muted">${UI.escHtml(DB.getDistrictName(r.districtId))}</td>
+                    <td class="text-sm">${UI.escHtml(DB.getUserName(r.submittedBy))}</td>
+                    <td class="text-sm text-muted">${UI.formatDateTime(r.submittedAt)}</td>
+                    <td class="text-sm">${(r.items||[]).length} commodities</td>
+                    <td>
+                      <div style="display:flex;gap:6px">
+                        <button class="btn btn-outline btn-sm" onclick="openReview('${r.id}')">📋 Review</button>
+                        <button class="btn btn-success btn-sm" onclick="quickApprove('${r.id}')">✅ Approve</button>
+                      </div>
+                    </td>
+                  </tr>`).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>`}
+    </div>
+
+    <div id="tab-reviewed" class="${activeTab==='reviewed'?'':'d-none'}">
+      <div class="card">
+        <div class="table-wrapper">
+          <table>
+            <thead><tr>
+              <th>Period</th><th>Facility</th><th>Submitted By</th>
+              <th>Reviewed By</th><th>Reviewed</th><th>Status</th><th>Reason</th>
+            </tr></thead>
+            <tbody>
+              ${reviewed.length === 0
+                ? `<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No reviewed reports yet</div></div></td></tr>`
+                : reviewed.sort((a,b)=>new Date(b.reviewedAt)-new Date(a.reviewedAt)).map(r => `<tr>
+                    <td class="fw-600">${r.period}</td>
+                    <td class="text-sm">${UI.escHtml(DB.getFacilityName(r.facilityId))}</td>
+                    <td class="text-sm">${UI.escHtml(DB.getUserName(r.submittedBy))}</td>
+                    <td class="text-sm">${UI.escHtml(DB.getUserName(r.reviewedBy))}</td>
+                    <td class="text-sm text-muted">${UI.formatDateTime(r.reviewedAt)}</td>
+                    <td>${UI.statusBadge(r.status)}</td>
+                    <td class="text-sm text-muted">${r.rejectionReason ? UI.escHtml(r.rejectionReason) : '—'}</td>
+                  </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Review Modal -->
+    <div class="modal-overlay" id="modal-review">
+      <div class="modal modal-xl">
+        <div class="modal-header">
+          <span class="modal-title" id="modal-review-title">Review Report</span>
+          <button class="modal-close" onclick="UI.closeModal('modal-review')">✕</button>
+        </div>
+        <div class="modal-body" id="modal-review-body"></div>
+        <div class="modal-footer" id="modal-review-footer"></div>
+      </div>
+    </div>
+
+    <!-- Reject Modal -->
+    <div class="modal-overlay" id="modal-reject">
+      <div class="modal">
+        <div class="modal-header">
+          <span class="modal-title">❌ Reject Report</span>
+          <button class="modal-close" onclick="UI.closeModal('modal-reject')">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-warning">
+            <span class="alert-icon">⚠️</span>
+            <div>The submitter will be notified with your rejection reason. They may correct and resubmit.</div>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label class="form-label">Rejection Reason <span class="required">*</span></label>
+            <textarea id="reject-reason" class="form-control" rows="3" placeholder="Explain why this report is being rejected…"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="UI.closeModal('modal-reject')">Cancel</button>
+          <button class="btn btn-danger" onclick="confirmReject()">❌ Confirm Rejection</button>
+        </div>
+      </div>
+    </div>
+  `);
+}
+
+function openReview(id) {
+  selectedReport = DB.getOne('reports', id);
+  if (!selectedReport) return;
+
+  document.getElementById('modal-review-title').textContent =
+    `Review: ${selectedReport.period} — ${DB.getFacilityName(selectedReport.facilityId)}`;
+
+  document.getElementById('modal-review-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px;padding:16px;background:var(--slate-50);border-radius:var(--radius-sm)">
+      <div><div class="text-xs text-muted">Facility</div><div class="fw-600 text-sm">${UI.escHtml(DB.getFacilityName(selectedReport.facilityId))}</div></div>
+      <div><div class="text-xs text-muted">Submitted By</div><div class="fw-600 text-sm">${UI.escHtml(DB.getUserName(selectedReport.submittedBy))}</div></div>
+      <div><div class="text-xs text-muted">Submitted</div><div class="fw-600 text-sm">${UI.formatDateTime(selectedReport.submittedAt)}</div></div>
+    </div>
+    <div class="table-wrapper">
+      <table>
+        <thead><tr>
+          <th>Commodity</th><th>Unit</th><th>Opening</th><th>Received</th>
+          <th>Consumed</th><th>Given Away</th><th>Expired</th><th>Damaged</th>
+          <th style="background:var(--blue-50)">Closing</th><th>Valid?</th>
+        </tr></thead>
+        <tbody>
+          ${(selectedReport.items || []).map(item => {
+            const com = DB.getOne('commodities', item.commodityId);
+            const totalOut = item.consumed + item.givenAway + item.expired + item.damagedLost;
+            const available = item.openingBalance + item.received;
+            const valid = item.closingBalance >= 0 && totalOut <= available;
+            return `<tr>
+              <td class="fw-600 text-sm">${UI.escHtml(DB.getCommodityName(item.commodityId))}</td>
+              <td class="text-sm text-muted">${com?.unit||'—'}</td>
+              <td>${item.openingBalance}</td>
+              <td>${item.received}</td>
+              <td class="text-danger">${item.consumed}</td>
+              <td>${item.givenAway}</td>
+              <td>${item.expired}</td>
+              <td>${item.damagedLost}</td>
+              <td style="background:var(--blue-50)"><strong class="${valid?'text-success':'text-danger'}">${item.closingBalance}</strong></td>
+              <td>${valid ? '<span class="badge badge-green">✓</span>' : '<span class="badge badge-red">✗</span>'}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  document.getElementById('modal-review-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="UI.closeModal('modal-review')">Close</button>
+    <button class="btn btn-danger" onclick="UI.closeModal('modal-review');openRejectModal('${id}')">❌ Reject</button>
+    <button class="btn btn-success" onclick="approve('${id}')">✅ Approve Report</button>
+  `;
+
+  UI.openModal('modal-review');
+}
+
+function openRejectModal(id) {
+  selectedReport = DB.getOne('reports', id);
+  document.getElementById('reject-reason').value = '';
+  UI.openModal('modal-reject');
+}
+
+function approve(id) {
+  DB.update('reports', id, {
+    status: 'approved',
+    reviewedBy: user.id,
+    reviewedAt: new Date().toISOString()
+  });
+  UI.closeModal('modal-review');
+  UI.toast('Report approved. The submitter has been notified.', 'success');
+  renderPage();
+}
+
+function quickApprove(id) {
+  if (!confirm('Approve this report without opening the full review?')) return;
+  approve(id);
+}
+
+function confirmReject() {
+  const reason = document.getElementById('reject-reason').value.trim();
+  if (!reason) { UI.toast('Please provide a rejection reason.', 'error'); return; }
+  if (!selectedReport) return;
+
+  DB.update('reports', selectedReport.id, {
+    status: 'rejected',
+    reviewedBy: user.id,
+    reviewedAt: new Date().toISOString(),
+    rejectionReason: reason
+  });
+
+  UI.closeModal('modal-reject');
+  UI.toast('Report rejected. The submitter has been notified with your reason.', 'warning');
+  renderPage();
+}
+
+renderPage();
+</script>
+</body>
+</html>

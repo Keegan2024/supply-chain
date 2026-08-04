@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Requisitions — SupplyNC</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<script src="../assets/js/mock-data.js"></script>
+<script src="../assets/js/auth.js"></script>
+<script>
+Auth.requireLogin();
+
+const user = Auth.getUser();
+const role = user.role;
+let selectedReqId  = null;
+let reqItemCount   = 1;
+
+/* ── helpers ─────────────────────────────────────── */
+function fromId()  { return role==='facility'?user.facilityId:role==='district'?user.districtId:role==='province'?user.provinceId:'hq_main'; }
+function fromLv()  { return role==='hq'||role==='admin'?'hq':role; }
+function levelLabel(lv,id) {
+  if(lv==='facility') return DB.getFacilityName(id);
+  if(lv==='district') return DB.getDistrictName(id)+' District';
+  if(lv==='province') return DB.getProvinceName(id)+' Province';
+  if(lv==='hq')       return 'HQ Central';
+  return id;
+}
+function myReqs() {
+  const all = DB.get('requisitions');
+  if(role==='facility') return all.filter(r=>r.fromId===user.facilityId||r.toId===user.facilityId);
+  if(role==='district') return all.filter(r=>r.fromId===user.districtId||r.toId===user.districtId);
+  if(role==='province') return all.filter(r=>r.fromId===user.provinceId||r.toId===user.provinceId);
+  return all;
+}
+function inboundReqs() {
+  const all = DB.get('requisitions').filter(r=>r.status==='pending');
+  if(role==='district') return all.filter(r=>r.toLevel==='district'&&r.toId===user.districtId);
+  if(role==='province') return all.filter(r=>r.toLevel==='province'&&r.toId===user.provinceId);
+  if(role==='hq'||role==='admin') return all.filter(r=>r.toLevel==='hq');
+  return [];
+}
+
+/* ── render ──────────────────────────────────────── */
+function renderPage() {
+  const mine    = myReqs();
+  const inbound = inboundReqs();
+  const canReq  = Auth.can('requestCommodities');
+  const isMgr   = ['district','province','hq','admin'].includes(role);
+  const tab     = window._reqtab || 'mine';
+
+  UI.shell('Requisitions', 'request', `
+    <div class="d-flex justify-between align-center mb-16">
+      <div>
+        <h2 class="fw-700" style="font-size:1.1rem">Commodity Requisitions</h2>
+        <div class="text-muted text-sm">Request, dispatch and track commodity movements</div>
+      </div>
+      ${canReq?`<button class="btn btn-primary" onclick="UI.openModal('modal-new')">+ New Request</button>`:''}
+    </div>
+
+    ${inbound.length>0?`<div class="alert alert-warning"><span class="alert-icon">📥</span>
+      <div><strong>${inbound.length} inbound request${inbound.length>1?'s':''} await your action.</strong>
+      <a href="#" onclick="window._reqtab='inbound';renderPage()" style="margin-left:8px;color:var(--amber-600);font-weight:600">Review now →</a></div>
+    </div>`:''}
+
+    <div class="tabs">
+      <button class="tab-btn ${tab==='mine'?'active':''}" onclick="window._reqtab='mine';renderPage()">📋 My Requests (${mine.length})</button>
+      ${isMgr?`<button class="tab-btn ${tab==='inbound'?'active':''}" onclick="window._reqtab='inbound';renderPage()">
+        📥 Inbound <span class="nav-badge" style="position:relative;margin-left:6px;background:var(--amber-600)">${inbound.length}</span>
+      </button>`:''}
+    </div>
+
+    ${tab==='mine' ? renderMyTab(mine) : renderInboundTab(inbound)}
+
+    <!-- New Request Modal -->
+    <div class="modal-overlay" id="modal-new">
+      <div class="modal modal-lg">
+        <div class="modal-header"><span class="modal-title">📤 New Commodity Request</span>
+          <button class="modal-close" onclick="UI.closeModal('modal-new')">✕</button></div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Request To <span class="required">*</span></label>
+            <select id="req-to" class="form-control">${buildTargetOptions()}</select>
+          </div>
+          <div class="d-flex justify-between align-center mb-8">
+            <label class="form-label mb-0">Items <span class="required">*</span></label>
+            <button class="btn btn-outline btn-sm" onclick="addItemRow()">+ Add Item</button>
+          </div>
+          <div id="req-items"></div>
+          <div class="form-group mt-16 mb-0">
+            <label class="form-label">Justification / Note</label>
+            <textarea id="req-note" class="form-control" rows="2" placeholder="Explain the reason…"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="UI.closeModal('modal-new')">Cancel</button>
+          <button class="btn btn-primary" onclick="submitReq()">📤 Submit Request</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dispatch Modal -->
+    <div class="modal-overlay" id="modal-dispatch">
+      <div class="modal modal-lg">
+        <div class="modal-header"><span class="modal-title">📦 Dispatch Commodities</span>
+          <button class="modal-close" onclick="UI.closeModal('modal-dispatch')">✕</button></div>
+        <div class="modal-body" id="dispatch-body"></div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="UI.closeModal('modal-dispatch')">Cancel</button>
+          <button class="btn btn-success" onclick="confirmDispatch()">📤 Confirm Dispatch & Notify Transporter</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- View/Track Modal -->
+    <div class="modal-overlay" id="modal-track">
+      <div class="modal modal-lg">
+        <div class="modal-header"><span class="modal-title" id="track-title">Track Requisition</span>
+          <button class="modal-close" onclick="UI.closeModal('modal-track')">✕</button></div>
+        <div class="modal-body" id="track-body"></div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="UI.closeModal('modal-track')">Close</button>
+        </div>
+      </div>
+    </div>
+  `);
+
+  // Seed first item row
+  if (!document.getElementById('req-items').innerHTML) initItemRows();
+}
+
+function renderMyTab(mine) {
+  if (!mine.length) return `<div class="card"><div class="card-body"><div class="empty-state"><div class="empty-icon">📤</div><div class="empty-title">No requests yet</div><div class="empty-desc">Click "+ New Request" to request commodities.</div></div></div></div>`;
+  return `<div class="card"><div class="table-wrapper"><table>
+    <thead><tr><th>Ref #</th><th>From</th><th>To</th><th>Items</th><th>Requested</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>
+      ${mine.sort((a,b)=>new Date(b.requestedAt)-new Date(a.requestedAt)).map(r=>`<tr>
+        <td class="td-mono text-sm">REQ-${r.id.slice(-8).toUpperCase()}</td>
+        <td class="text-sm">${levelLabel(r.fromLevel,r.fromId)}</td>
+        <td class="text-sm">${levelLabel(r.toLevel,r.toId)}</td>
+        <td class="text-sm">${r.items.length} item${r.items.length>1?'s':''}</td>
+        <td class="text-sm text-muted">${fmtDT(r.requestedAt)}</td>
+        <td>${UI.statusBadge(r.status)}</td>
+        <td><button class="btn btn-outline btn-sm" onclick="viewReq('${r.id}')">👁 Track</button></td>
+      </tr>`).join('')}
+    </tbody>
+  </table></div></div>`;
+}
+
+function renderInboundTab(inbound) {
+  if (!inbound.length) return `<div class="card"><div class="card-body"><div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No inbound requests</div></div></div></div>`;
+  return `<div class="card"><div class="table-wrapper"><table>
+    <thead><tr><th>Ref #</th><th>Requested By</th><th>From</th><th>Commodities Requested</th><th>Date</th><th>Note</th><th>Actions</th></tr></thead>
+    <tbody>
+      ${inbound.map(r=>`<tr>
+        <td class="td-mono text-sm">REQ-${r.id.slice(-8).toUpperCase()}</td>
+        <td class="text-sm">${DB.getUserName(r.requestedBy)}</td>
+        <td class="text-sm">${levelLabel(r.fromLevel,r.fromId)}</td>
+        <td>${r.items.map(i=>`<div class="text-sm"><b>${DB.getCommodityName(i.commodityId)}</b>: ${i.requestedQty} ${i.unit}</div>`).join('')}</td>
+        <td class="text-sm text-muted">${fmtDT(r.requestedAt)}</td>
+        <td class="text-sm text-muted">${r.note||'—'}</td>
+        <td>
+          <div style="display:flex;gap:5px">
+            <button class="btn btn-success btn-sm" onclick="openDispatch('${r.id}')">📦 Dispatch</button>
+            <button class="btn btn-danger btn-sm"  onclick="declineReq('${r.id}')">✕ Decline</button>
+          </div>
+        </td>
+      </tr>`).join('')}
+    </tbody>
+  </table></div></div>`;
+}
+
+/* ── Item rows ───────────────────────────────────── */
+function initItemRows() {
+  reqItemCount = 1;
+  const wrap = document.getElementById('req-items');
+  if (wrap) wrap.innerHTML = buildItemRow(0);
+}
+function addItemRow() {
+  const wrap = document.getElementById('req-items');
+  if (!wrap) return;
+  const div  = document.createElement('div');
+  div.innerHTML = buildItemRow(reqItemCount++);
+  wrap.appendChild(div.firstElementChild);
+}
+function buildItemRow(idx) {
+  const coms = DB.get('commodities');
+  return `<div class="form-row cols-2" id="irow-${idx}" style="margin-bottom:8px;align-items:flex-end">
+    <div class="form-group mb-0">
+      <label class="form-label text-xs">Commodity</label>
+      <select class="form-control rq-com">
+        <option value="">— Select —</option>
+        ${coms.map(c=>`<option value="${c.id}" data-unit="${c.unit}">${c.name}</option>`).join('')}
+      </select>
+    </div>
+    <div style="display:flex;gap:8px;align-items:flex-end">
+      <div class="form-group mb-0" style="flex:1">
+        <label class="form-label text-xs">Quantity</label>
+        <input type="number" class="form-control rq-qty" min="1" placeholder="0">
+      </div>
+      ${idx>0?`<button class="btn btn-ghost btn-sm" style="color:var(--red-600)" onclick="document.getElementById('irow-${idx}').remove()">✕</button>`:''}
+    </div>
+  </div>`;
+}
+function buildTargetOptions() {
+  let o = '<option value="">— Select destination —</option>';
+  const prov = DB.get('provinces');
+  const dist = DB.get('districts');
+  const facs = DB.get('facilities');
+  if (role==='facility') {
+    const dId = user.districtId;
+    const pId = dist.find(d=>d.id===dId)?.provinceId;
+    if (dId) o+=`<option value="district:${dId}">⬆ District: ${DB.getDistrictName(dId)}</option>`;
+    if (pId) o+=`<option value="province:${pId}">⬆ Province: ${DB.getProvinceName(pId)}</option>`;
+    o+=`<option value="hq:hq_main">⬆ Headquarters (HQ)</option>`;
+  } else if (role==='district') {
+    const pId = dist.find(d=>d.id===user.districtId)?.provinceId;
+    if (pId) o+=`<option value="province:${pId}">⬆ Province: ${DB.getProvinceName(pId)}</option>`;
+    o+=`<option value="hq:hq_main">⬆ HQ Central</option>`;
+    facs.filter(f=>f.districtId===user.districtId).forEach(f=>{o+=`<option value="facility:${f.id}">⬇ Facility: ${f.name}</option>`;});
+  } else if (role==='province') {
+    o+=`<option value="hq:hq_main">⬆ HQ Central</option>`;
+    dist.filter(d=>d.provinceId===user.provinceId).forEach(d=>{o+=`<option value="district:${d.id}">⬇ District: ${d.name}</option>`;});
+    facs.filter(f=>dist.find(d=>d.id===f.districtId&&d.provinceId===user.provinceId)).forEach(f=>{o+=`<option value="facility:${f.id}">⬇ Facility: ${f.name}</option>`;});
+  } else {
+    prov.forEach(p=>{o+=`<option value="province:${p.id}">Province: ${p.name}</option>`;});
+    dist.forEach(d=>{o+=`<option value="district:${d.id}">District: ${d.name}</option>`;});
+    facs.forEach(f=>{o+=`<option value="facility:${f.id}">Facility: ${f.name}</option>`;});
+  }
+  return o;
+}
+
+/* ── Submit request ──────────────────────────────── */
+function submitReq() {
+  const toRaw = document.getElementById('req-to').value;
+  const note  = document.getElementById('req-note').value.trim();
+  if (!toRaw) { UI.toast('Select a destination.','error'); return; }
+  const [toLevel,toId] = toRaw.split(':');
+  const rows  = document.querySelectorAll('#req-items .form-row');
+  const items = [];
+  rows.forEach(row=>{
+    const comId = row.querySelector('.rq-com').value;
+    const qty   = parseInt(row.querySelector('.rq-qty').value)||0;
+    if (!comId||qty<=0) return;
+    const com = DB.getOne('commodities',comId);
+    items.push({ commodityId:comId, requestedQty:qty, approvedQty:null, unit:com?.unit||'' });
+  });
+  if (!items.length) { UI.toast('Add at least one commodity with quantity.','error'); return; }
+
+  DB.add('requisitions',{
+    id:DB.genId('req'), requestedBy:user.id,
+    fromLevel:fromLv(), fromId:fromId(),
+    toLevel, toId, status:'pending',
+    requestedAt:new Date().toISOString(),
+    items, note,
+    transporterEmail:null, transporterName:null,
+    dispatchedAt:null, receivedAt:null,
+    senderConfirmed:false, transporterConfirmed:false,
+    receiverConfirmed:false, managerSignOff:false
+  });
+  UI.closeModal('modal-new');
+  UI.toast('Request submitted! The receiving party has been notified.','success',4000);
+  renderPage();
+}
+
+/* ── Dispatch ────────────────────────────────────── */
+function openDispatch(id) {
+  selectedReqId = id;
+  const r = DB.getOne('requisitions',id);
+  if (!r) return;
+
+  // Determine this manager's warehouse
+  const wType = role==='district'?'district':role==='province'?'province':'hq';
+  const wId   = role==='district'?user.districtId:role==='province'?user.provinceId:'hq_main';
+  const wStock= DB.get('warehouseStock').filter(w=>w.warehouseType===wType&&w.warehouseId===wId);
+
+  document.getElementById('dispatch-body').innerHTML = `
+    <div class="alert alert-info mb-16">
+      <span class="alert-icon">ℹ️</span>
+      <div>Review available stock, set approved quantities, then assign a transporter. They will receive an email link to accept or reject.</div>
+    </div>
+    <div class="table-wrapper mb-16">
+      <table>
+        <thead><tr><th>Commodity</th><th>Requested Qty</th><th>In Your Warehouse</th><th>Approve Qty</th></tr></thead>
+        <tbody>
+          ${r.items.map((item,i)=>{
+            const ws    = wStock.find(w=>w.commodityId===item.commodityId);
+            const avail = ws?ws.quantity:0;
+            const color = avail<item.requestedQty?'var(--red-600)':'var(--green-600)';
+            return `<tr>
+              <td class="fw-600 text-sm">${DB.getCommodityName(item.commodityId)}</td>
+              <td>${item.requestedQty} ${item.unit}</td>
+              <td><span style="font-weight:700;color:${color}">${avail.toLocaleString()}</span> ${item.unit}</td>
+              <td><input type="number" class="form-control appr-qty" style="width:90px"
+                data-idx="${i}" data-commodity="${item.commodityId}"
+                data-max="${avail}" max="${avail}" min="0"
+                value="${Math.min(item.requestedQty,avail)}"></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="form-row cols-2">
+      <div class="form-group mb-0">
+        <label class="form-label">Transporter Name <span class="required">*</span></label>
+        <input type="text" id="trans-name" class="form-control" placeholder="Full name of transporter / rider">
+      </div>
+      <div class="form-group mb-0">
+        <label class="form-label">Transporter Email <span class="required">*</span></label>
+        <input type="email" id="trans-email" class="form-control" placeholder="transporter@example.com">
+      </div>
+    </div>
+  `;
+  UI.openModal('modal-dispatch');
+}
+
+function confirmDispatch() {
+  const r     = DB.getOne('requisitions',selectedReqId);
+  if (!r) return;
+  const tName = document.getElementById('trans-name').value.trim();
+  const tEmail= document.getElementById('trans-email').value.trim();
+  if (!tName)  { UI.toast('Transporter name required.','error'); return; }
+  if (!tEmail) { UI.toast('Transporter email required.','error'); return; }
+
+  const inputs = document.querySelectorAll('.appr-qty');
+  let hasErr   = false;
+  const updItems = r.items.map((item,i)=>{
+    const inp = inputs[i];
+    const qty = parseInt(inp?.value)||0;
+    const max = parseInt(inp?.dataset.max)||0;
+    if (qty>max) { hasErr=true; }
+    return {...item, approvedQty:qty};
+  });
+  if (hasErr) { UI.toast('Approved quantity exceeds warehouse stock.','error'); return; }
+
+  // Deduct from warehouse
+  const wType = role==='district'?'district':role==='province'?'province':'hq';
+  const wId   = role==='district'?user.districtId:role==='province'?user.provinceId:'hq_main';
+  updItems.forEach(item=>{
+    if (item.approvedQty>0) {
+      const ws = DB.get('warehouseStock').find(w=>w.warehouseType===wType&&w.warehouseId===wId&&w.commodityId===item.commodityId);
+      if (ws) DB.update('warehouseStock',ws.id,{quantity:ws.quantity-item.approvedQty});
+    }
+  });
+
+  DB.update('requisitions',selectedReqId,{
+    items:updItems, status:'dispatched',
+    transporterName:tName, transporterEmail:tEmail,
+    dispatchedAt:new Date().toISOString(), senderConfirmed:true
+  });
+
+  DB.add('auditLog',{ id:DB.genId('log'), action:'dispatched', userId:user.id,
+    details:`Dispatched REQ-${selectedReqId.slice(-8).toUpperCase()} to ${tName} (${tEmail})`,
+    timestamp:new Date().toISOString() });
+
+  UI.closeModal('modal-dispatch');
+  UI.toast(`Dispatched! Email sent to ${tName} at ${tEmail} to accept/reject transport.`,'success',5000);
+  renderPage();
+}
+
+function declineReq(id) {
+  if (!confirm('Decline this requisition?')) return;
+  DB.update('requisitions',id,{status:'rejected'});
+  UI.toast('Requisition declined.','warning');
+  renderPage();
+}
+
+/* ── View/Track ──────────────────────────────────── */
+function viewReq(id) {
+  const r = DB.getOne('requisitions',id);
+  if (!r) return;
+  document.getElementById('track-title').textContent = `REQ-${r.id.slice(-8).toUpperCase()}`;
+
+  const stepNum = r.managerSignOff?5:r.receiverConfirmed?4:r.transporterConfirmed?3:r.senderConfirmed?2:1;
+  const steps   = ['Requested','Dispatched','Transporter ✓','Received','Manager Sign-off'];
+
+  document.getElementById('track-body').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;padding:14px;background:var(--slate-50);border-radius:var(--radius-sm)">
+      <div><div class="text-xs text-muted">From</div><div class="fw-600 text-sm">${levelLabel(r.fromLevel,r.fromId)}</div></div>
+      <div><div class="text-xs text-muted">To</div><div class="fw-600 text-sm">${levelLabel(r.toLevel,r.toId)}</div></div>
+      <div><div class="text-xs text-muted">Requested By</div><div class="fw-600 text-sm">${DB.getUserName(r.requestedBy)}</div></div>
+      <div><div class="text-xs text-muted">Status</div>${UI.statusBadge(r.status)}</div>
+      ${r.transporterName?`<div><div class="text-xs text-muted">Transporter</div><div class="fw-600 text-sm">${r.transporterName}</div></div>`:''}
+      ${r.note?`<div><div class="text-xs text-muted">Note</div><div class="text-sm">${r.note}</div></div>`:''}
+    </div>
+
+    <!-- Tracker -->
+    <div class="delivery-track mb-16">
+      ${steps.map((s,i)=>{
+        const n = i+1;
+        return `<div class="track-step ${n<stepNum?'done':n===stepNum?'active':''}">
+          <div class="track-dot">${n<stepNum?'✓':n===stepNum?'●':''}</div>
+          <div class="track-label">${s}</div>
+        </div>`;
+      }).join('')}
+    </div>
+
+    <!-- Items -->
+    <div class="table-wrapper mb-16">
+      <table><thead><tr><th>Commodity</th><th>Requested</th><th>Approved</th><th>Unit</th></tr></thead>
+      <tbody>
+        ${r.items.map(i=>`<tr>
+          <td class="fw-600 text-sm">${DB.getCommodityName(i.commodityId)}</td>
+          <td>${i.requestedQty}</td>
+          <td>${i.approvedQty!==null?`<span class="text-success fw-600">${i.approvedQty}</span>`:'<span class="text-muted">Pending</span>'}</td>
+          <td class="text-muted text-sm">${i.unit}</td>
+        </tr>`).join('')}
+      </tbody></table>
+    </div>
+
+    <!-- Actions -->
+    ${renderTrackActions(r)}
+  `;
+  UI.openModal('modal-track');
+}
+
+function renderTrackActions(r) {
+  const isReceiver = (r.toLevel===role)||(role==='facility'&&r.toId===user.facilityId)||(role==='district'&&r.toId===user.districtId)||(role==='province'&&r.toId===user.provinceId);
+  const isMgr      = ['district','province','hq','admin'].includes(role);
+  let html = '';
+  if (r.status==='dispatched'&&r.transporterConfirmed&&!r.receiverConfirmed&&isReceiver)
+    html+=`<button class="btn btn-success mt-8" onclick="confirmReceive('${r.id}')">✅ Confirm Receipt</button> `;
+  if (r.receiverConfirmed&&!r.managerSignOff&&isMgr)
+    html+=`<button class="btn btn-teal mt-8" onclick="managerSignOff('${r.id}')">✍️ Manager Sign-off</button>`;
+  if (!r.transporterConfirmed&&r.senderConfirmed)
+    html+=`<div class="alert alert-warning mt-8 mb-0"><span class="alert-icon">⏳</span><div>Waiting for <b>${r.transporterName||'transporter'}</b> to accept via email.</div></div>`;
+  return html ? `<div style="padding-top:14px;border-top:1px solid var(--slate-100)">${html}</div>` : '';
+}
+
+function confirmReceive(id) {
+  if (!confirm('Confirm receipt of this delivery? Stock will be updated.')) return;
+  const r = DB.getOne('requisitions',id);
+  DB.update('requisitions',id,{receiverConfirmed:true,receivedAt:new Date().toISOString(),status:'received'});
+  if (r&&r.toLevel==='facility') {
+    r.items.forEach(item=>{
+      if (!item.approvedQty||item.approvedQty<=0) return;
+      const ex = DB.get('facilityStock').find(s=>s.facilityId===r.toId&&s.commodityId===item.commodityId);
+      if (ex) DB.update('facilityStock',ex.id,{received:(ex.received||0)+item.approvedQty,closingBalance:ex.closingBalance+item.approvedQty,lastUpdated:new Date().toISOString()});
+      else DB.add('facilityStock',{id:DB.genId('fs'),facilityId:r.toId,commodityId:item.commodityId,batchNo:'DELIVERY',openingBalance:0,received:item.approvedQty,consumed:0,givenAway:0,expired:0,damagedLost:0,closingBalance:item.approvedQty,expiryDate:null,lastUpdated:new Date().toISOString()});
+    });
+  }
+  UI.closeModal('modal-track');
+  UI.toast('Receipt confirmed! Stock updated. Awaiting manager sign-off.','success',4000);
+  renderPage();
+}
+
+function managerSignOff(id) {
+  if (!confirm('Provide final sign-off? This marks the delivery complete.')) return;
+  DB.update('requisitions',id,{managerSignOff:true,status:'delivered'});
+  UI.closeModal('modal-track');
+  UI.toast('Delivery signed off and marked complete.','success');
+  renderPage();
+}
+
+function fmtDT(iso){ return iso?new Date(iso).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}):'—'; }
+
+renderPage();
+// Seed item rows after render
+setTimeout(()=>{ if(document.getElementById('req-items')&&!document.getElementById('req-items').innerHTML) initItemRows(); },100);
+</script>
+</body>
+</html>

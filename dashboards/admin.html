@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Dashboard — SupplyNC</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<script src="../assets/js/mock-data.js"></script>
+<script src="../assets/js/auth.js"></script>
+<script>
+Auth.requireLogin();
+if (Auth.getRole() !== 'admin') Auth.redirectToDashboard();
+
+const users      = DB.get('users');
+const pending    = users.filter(u => u.status === 'pending');
+const active     = users.filter(u => u.status === 'active');
+const provinces  = DB.get('provinces');
+const districts  = DB.get('districts');
+const facilities = DB.get('facilities');
+const reports    = DB.get('reports');
+const reqs       = DB.get('requisitions');
+const commodities= DB.get('commodities');
+const auditLog   = DB.get('auditLog');
+
+const roleCounts = ['facility','district','province','hq','admin'].map(r => ({
+  role: r, count: users.filter(u => u.role === r).length
+}));
+
+UI.shell('Admin Dashboard', 'dashboard', `
+  <div class="mb-16">
+    <h2 class="fw-700" style="font-size:1.2rem">System Administration</h2>
+    <span class="text-muted text-sm">Full system access · Backend oversight · User management</span>
+  </div>
+
+  ${pending.length > 0 ? `
+    <div class="alert alert-warning">
+      <span class="alert-icon">🔔</span>
+      <div><strong>${pending.length} account${pending.length > 1 ? 's' : ''} awaiting your approval.</strong>
+        <a href="../users/signup-approvals.html" style="margin-left:8px;color:var(--amber-600);font-weight:600">Review signups →</a></div>
+    </div>` : ''}
+
+  <!-- System Stats -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-icon amber">🔔</div>
+      <div><div class="stat-value">${pending.length}</div><div class="stat-label">Pending Signups</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon green">👥</div>
+      <div><div class="stat-value">${active.length}</div><div class="stat-label">Active Users</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon blue">🌍</div>
+      <div><div class="stat-value">${provinces.length}</div><div class="stat-label">Provinces</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon teal">🗺️</div>
+      <div><div class="stat-value">${districts.length}</div><div class="stat-label">Districts</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon blue">🏥</div>
+      <div><div class="stat-value">${facilities.length}</div><div class="stat-label">Facilities</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon teal">💊</div>
+      <div><div class="stat-value">${commodities.length}</div><div class="stat-label">Commodities</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon amber">📋</div>
+      <div><div class="stat-value">${reports.filter(r=>r.status==='pending').length}</div><div class="stat-label">Pending Reports</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon amber">📤</div>
+      <div><div class="stat-value">${reqs.filter(r=>r.status==='pending').length}</div><div class="stat-label">Pending Requisitions</div></div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+    <!-- Pending Signups -->
+    <div class="card">
+      <div class="card-header">
+        <div><div class="card-title">🔔 Pending Signups</div><div class="card-subtitle">Awaiting your approval</div></div>
+        <a href="../users/signup-approvals.html" class="btn btn-primary btn-sm">Review All</a>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>Name</th><th>Role</th><th>Applied</th><th>Action</th></tr></thead>
+          <tbody>
+            ${pending.length === 0
+              ? `<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">✅</div><div class="empty-title">No pending signups</div></div></td></tr>`
+              : pending.slice(0,5).map(u => `<tr>
+                  <td><div class="fw-600 text-sm">${UI.escHtml(u.name)}</div><div class="text-xs text-muted">${u.email}</div></td>
+                  <td><span class="badge ${UI.roleBadgeClass(u.role)}">${UI.roleLabel(u.role)}</span></td>
+                  <td class="text-sm text-muted">${UI.formatDate(u.createdAt)}</td>
+                  <td>
+                    <button class="btn btn-success btn-sm" onclick="approveUser('${u.id}')">Approve</button>
+                    <button class="btn btn-danger btn-sm" onclick="rejectUser('${u.id}')">Reject</button>
+                  </td>
+                </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- User Breakdown by Role -->
+    <div class="card">
+      <div class="card-header">
+        <div><div class="card-title">👥 Users by Role</div><div class="card-subtitle">System-wide breakdown</div></div>
+        <a href="../users/manage.html" class="btn btn-outline btn-sm">Manage All</a>
+      </div>
+      <div class="card-body">
+        ${roleCounts.map(rc => `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--slate-100)">
+            <div style="display:flex;align-items:center;gap:10px">
+              <span class="badge ${UI.roleBadgeClass(rc.role)}">${UI.roleLabel(rc.role)}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <div style="width:120px;height:6px;background:var(--slate-100);border-radius:99px;overflow:hidden">
+                <div style="height:100%;background:var(--blue-600);border-radius:99px;width:${Math.min(100,rc.count*10)}%"></div>
+              </div>
+              <span class="fw-600 text-sm">${rc.count}</span>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>
+  </div>
+
+  <!-- All Users Table -->
+  <div class="card mt-16">
+    <div class="card-header">
+      <div><div class="card-title">👥 All Users</div></div>
+      <div class="d-flex gap-8">
+        <input type="text" id="user-search" class="form-control" style="width:200px" placeholder="Search users…" oninput="filterUsers()">
+        <a href="../users/manage.html" class="btn btn-outline btn-sm">Full View</a>
+      </div>
+    </div>
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Joined</th><th>Actions</th></tr></thead>
+        <tbody id="users-table">
+          ${renderUsersRows(users)}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Quick Actions -->
+  <div class="card mt-16">
+    <div class="card-header"><div class="card-title">⚡ Admin Actions</div></div>
+    <div class="card-body">
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <a href="../users/signup-approvals.html" class="btn btn-primary">🔔 Signup Approvals</a>
+        <a href="../setup/onboarding.html" class="btn btn-teal">🏗️ Setup & Onboarding</a>
+        <a href="../users/manage.html" class="btn btn-outline">👥 All Users</a>
+        <a href="../commodities/manage.html" class="btn btn-outline">💊 Commodities</a>
+        <a href="../reports/review.html" class="btn btn-outline">📋 All Reports</a>
+        <a href="../stock/warehouse.html" class="btn btn-outline">🏭 Warehouses</a>
+        <a href="../reports/window-manager.html" class="btn btn-outline">📅 Report Windows</a>
+        <a href="../dashboards/hq.html" class="btn btn-outline">🌍 HQ View</a>
+      </div>
+    </div>
+  </div>
+`);
+
+function renderUsersRows(list) {
+  if (!list.length) return `<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">👥</div><div class="empty-title">No users found</div></div></td></tr>`;
+  return list.slice(0,10).map(u => `<tr>
+    <td><div class="fw-600 text-sm">${UI.escHtml(u.name)}</div></td>
+    <td class="text-sm text-muted">${u.email}</td>
+    <td><span class="badge ${UI.roleBadgeClass(u.role)}">${UI.roleLabel(u.role)}</span></td>
+    <td>${UI.statusBadge(u.status)}</td>
+    <td class="text-sm text-muted">${UI.formatDate(u.createdAt)}</td>
+    <td>
+      ${u.status === 'pending' ? `<button class="btn btn-success btn-sm" onclick="approveUser('${u.id}')">Approve</button>` : ''}
+      ${u.status === 'active' && u.role !== 'admin' ? `<button class="btn btn-danger btn-sm" onclick="suspendUser('${u.id}')">Suspend</button>` : ''}
+    </td>
+  </tr>`).join('');
+}
+
+function filterUsers() {
+  const q = document.getElementById('user-search').value.toLowerCase();
+  const filtered = DB.get('users').filter(u => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q));
+  document.getElementById('users-table').innerHTML = renderUsersRows(filtered);
+}
+
+function approveUser(id) {
+  DB.update('users', id, { status: 'active' });
+  UI.toast('User approved and account activated.', 'success');
+  location.reload();
+}
+
+function rejectUser(id) {
+  if (confirm('Reject this signup? The user will be notified.')) {
+    DB.update('users', id, { status: 'rejected' });
+    UI.toast('Signup rejected.', 'warning');
+    location.reload();
+  }
+}
+
+function suspendUser(id) {
+  if (confirm('Suspend this user account?')) {
+    DB.update('users', id, { status: 'suspended' });
+    UI.toast('User account suspended.', 'warning');
+    location.reload();
+  }
+}
+</script>
+</body>
+</html>

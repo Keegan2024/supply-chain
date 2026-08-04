@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>User Privileges — SupplyNC</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<script src="../assets/js/mock-data.js"></script>
+<script src="../assets/js/auth.js"></script>
+<script>
+Auth.requireLogin();
+if (!['district','admin'].includes(Auth.getRole())) { alert('Access denied.'); Auth.redirectToDashboard(); }
+
+const user = Auth.getUser();
+const role = user.role;
+
+// All available privilege options with labels, descriptions and who can grant them
+const ALL_PRIVILEGES = [
+  // Reporting
+  { id: 'priv_submit_reports',     label: 'Submit Reports',          group: 'Reporting',      desc: 'Can submit monthly reports.',                          grantableBy: ['district','admin'] },
+  { id: 'priv_withdraw_report',    label: 'Withdraw Reports',        group: 'Reporting',      desc: 'Can withdraw a pending report before it is reviewed.', grantableBy: ['district','admin'] },
+  { id: 'priv_review_reports',     label: 'Review Reports',          group: 'Reporting',      desc: 'Can review, approve or reject reports from below.',    grantableBy: ['admin'] },
+  { id: 'priv_manage_window',      label: 'Manage Report Window',    group: 'Reporting',      desc: 'Can open, close or reopen the report window.',         grantableBy: ['admin'] },
+
+  // Stock & Commodities
+  { id: 'priv_view_own_stock',     label: 'View Own Stock',          group: 'Stock',          desc: 'Can view their own facility/warehouse stock.',          grantableBy: ['district','admin'] },
+  { id: 'priv_view_facility_stock',label: 'View All Facility Stock', group: 'Stock',          desc: 'Can see stock levels of all facilities below.',        grantableBy: ['admin'] },
+  { id: 'priv_add_edit_commodities',label:'Add/Edit Commodities',    group: 'Stock',          desc: 'Can add or edit items in the commodity catalogue.',    grantableBy: ['admin'] },
+  { id: 'priv_adjust_stock',       label: 'Adjust Warehouse Stock',  group: 'Stock',          desc: 'Can make manual stock adjustments with reason.',       grantableBy: ['admin'] },
+
+  // Requisitions & Deliveries
+  { id: 'priv_request_commodities',label: 'Request Commodities',     group: 'Requisitions',   desc: 'Can submit commodity requests to a higher level.',     grantableBy: ['district','admin'] },
+  { id: 'priv_dispatch_commodities',label:'Dispatch Commodities',    group: 'Requisitions',   desc: 'Can approve and dispatch commodity requests.',         grantableBy: ['admin'] },
+  { id: 'priv_confirm_receipt',    label: 'Confirm Delivery Receipt',group: 'Requisitions',   desc: 'Can confirm receipt of delivered commodities.',        grantableBy: ['district','admin'] },
+  { id: 'priv_share_commodity',    label: 'Share Commodities',       group: 'Requisitions',   desc: 'Can initiate inter-facility commodity sharing.',       grantableBy: ['district','admin'] },
+  { id: 'priv_manager_signoff',    label: 'Manager Delivery Sign-off',group:'Requisitions',   desc: 'Can provide final sign-off on completed deliveries.',  grantableBy: ['admin'] },
+
+  // User Management
+  { id: 'priv_view_users',         label: 'View Users',              group: 'Users',          desc: 'Can view the user list at their level.',               grantableBy: ['district','admin'] },
+  { id: 'priv_onboard_facilities', label: 'Onboard Facilities',      group: 'Users',          desc: 'Can add new facilities to the system.',               grantableBy: ['admin'] },
+  { id: 'priv_manage_facility_staff',label:'Manage Facility Staff',  group: 'Users',          desc: 'Can edit and manage facility-level user accounts.',   grantableBy: ['district','admin'] },
+];
+
+function getPrivilegeGroups() {
+  const groups = {};
+  ALL_PRIVILEGES.forEach(p => {
+    if (!groups[p.group]) groups[p.group] = [];
+    groups[p.group].push(p);
+  });
+  return groups;
+}
+
+function getUserPrivileges(userId) {
+  const users = DB.get('users');
+  const u = users.find(x => x.id === userId);
+  return u?.privileges || [];
+}
+
+function getManageableUsers() {
+  const all = DB.get('users');
+  if (role === 'admin') return all.filter(u => u.status === 'active' && u.role !== 'admin');
+  if (role === 'district') return all.filter(u => u.status === 'active' && u.role === 'facility' && u.districtId === user.districtId);
+  return [];
+}
+
+let selectedUserId = null;
+
+function renderPage() {
+  const manageableUsers = getManageableUsers();
+  const groups = getPrivilegeGroups();
+
+  UI.shell('User Privileges', 'privileges', `
+    <div class="mb-16">
+      <h2 class="fw-700" style="font-size:1.1rem">User Privileges</h2>
+      <div class="text-muted text-sm">Grant or revoke extra privileges for users under your management</div>
+    </div>
+
+    <div class="alert alert-info mb-16">
+      <span class="alert-icon">ℹ️</span>
+      <div>Base roles already carry default rights. Use this page to <strong>extend</strong> specific privileges beyond the default for individual users. Changes take effect immediately.</div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:280px 1fr;gap:20px;align-items:start">
+
+      <!-- User List -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">👥 Select User</div>
+        </div>
+        <div style="padding:12px">
+          <input type="text" id="user-search" class="form-control mb-8" placeholder="Search…" oninput="filterUserList()">
+        </div>
+        <div id="user-list" style="max-height:520px;overflow-y:auto">
+          ${renderUserList(manageableUsers)}
+        </div>
+      </div>
+
+      <!-- Privileges Panel -->
+      <div id="privileges-panel">
+        <div class="card">
+          <div class="card-body" style="text-align:center;padding:48px 24px">
+            <div style="font-size:2.5rem;margin-bottom:12px">🔑</div>
+            <div class="fw-600" style="color:var(--slate-700)">Select a user</div>
+            <div class="text-muted text-sm mt-8">Choose a user from the list to manage their privileges.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  `);
+}
+
+function renderUserList(users) {
+  if (!users.length) return `<div class="empty-state" style="padding:24px"><div class="empty-icon">👥</div><div class="empty-title">No users</div></div>`;
+  return users.map(u => `
+    <div class="nav-item ${selectedUserId === u.id ? 'active' : ''}" onclick="selectUser('${u.id}')" style="cursor:pointer;border-left:3px solid ${selectedUserId===u.id?'var(--teal-500)':'transparent'}">
+      <div style="width:30px;height:30px;border-radius:50%;background:var(--blue-600);color:white;display:flex;align-items:center;justify-content:center;font-size:.7rem;font-weight:700;flex-shrink:0">${UI.escHtml(u.avatar)}</div>
+      <div style="min-width:0">
+        <div class="fw-600 text-sm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${UI.escHtml(u.name)}</div>
+        <div class="text-xs" style="color:rgba(255,255,255,.45)">${UI.roleLabel(u.role)}</div>
+      </div>
+      ${(u.privileges||[]).length > 0 ? `<span class="nav-badge" style="background:var(--teal-500)">${u.privileges.length}</span>` : ''}
+    </div>`).join('');
+}
+
+function filterUserList() {
+  const q = document.getElementById('user-search').value.toLowerCase();
+  const users = getManageableUsers().filter(u =>
+    u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)
+  );
+  document.getElementById('user-list').innerHTML = renderUserList(users);
+}
+
+function selectUser(uid) {
+  selectedUserId = uid;
+  const u = DB.getOne('users', uid);
+  if (!u) return;
+
+  // Re-render user list to highlight selected
+  document.getElementById('user-list').innerHTML = renderUserList(getManageableUsers());
+
+  const userPrivileges = u.privileges || [];
+  const groups = getPrivilegeGroups();
+
+  document.getElementById('privileges-panel').innerHTML = `
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <div style="width:38px;height:38px;border-radius:50%;background:var(--blue-600);color:white;display:flex;align-items:center;justify-content:center;font-size:.85rem;font-weight:700">${UI.escHtml(u.avatar)}</div>
+            <div>
+              <div class="card-title">${UI.escHtml(u.name)}</div>
+              <div class="card-subtitle">${u.email} · <span class="badge ${UI.roleBadgeClass(u.role)}">${UI.roleLabel(u.role)}</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="d-flex gap-8">
+          <button class="btn btn-outline btn-sm" onclick="revokeAll('${uid}')">Revoke All</button>
+          <button class="btn btn-teal btn-sm" onclick="grantAll('${uid}')">Grant All Applicable</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="alert alert-info mb-16">
+          <span class="alert-icon">🔑</span>
+          <div>${userPrivileges.length > 0
+            ? `<strong>${userPrivileges.length} extra privilege${userPrivileges.length>1?'s':''} currently granted.</strong> Toggle any privilege below.`
+            : 'No extra privileges granted yet. This user relies on their default role rights only.'}</div>
+        </div>
+
+        ${Object.entries(groups).map(([groupName, privs]) => {
+          const grantable = privs.filter(p => p.grantableBy.includes(role));
+          if (!grantable.length) return '';
+          return `
+            <div class="mb-16">
+              <div class="text-xs text-muted fw-600" style="text-transform:uppercase;letter-spacing:.7px;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid var(--slate-100)">${groupName}</div>
+              ${grantable.map(p => {
+                const hasPriv = userPrivileges.includes(p.id);
+                return `
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--slate-50)">
+                    <div style="flex:1;margin-right:16px">
+                      <div class="fw-600 text-sm">${p.label}</div>
+                      <div class="text-xs text-muted">${p.desc}</div>
+                    </div>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;flex-shrink:0">
+                      <div style="position:relative">
+                        <input type="checkbox" id="priv-${p.id}"
+                          ${hasPriv ? 'checked' : ''}
+                          onchange="togglePrivilege('${uid}','${p.id}',this.checked)"
+                          style="width:0;height:0;opacity:0;position:absolute">
+                        <div onclick="document.getElementById('priv-${p.id}').click()"
+                          style="width:44px;height:24px;border-radius:99px;background:${hasPriv?'var(--teal-500)':'var(--slate-300)'};transition:background .2s;cursor:pointer;position:relative">
+                          <div style="position:absolute;top:3px;left:${hasPriv?'23px':'3px'};width:18px;height:18px;background:white;border-radius:50%;transition:left .2s;box-shadow:0 1px 3px rgba(0,0,0,.2)"></div>
+                        </div>
+                      </div>
+                      <span class="text-sm ${hasPriv?'text-success fw-600':'text-muted'}">${hasPriv?'Granted':'Not set'}</span>
+                    </label>
+                  </div>`;
+              }).join('')}
+            </div>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <!-- Audit Log for this user -->
+    <div class="card mt-16">
+      <div class="card-header">
+        <div class="card-title">📋 Privilege Change History</div>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>Action</th><th>Privilege</th><th>Changed By</th><th>Date</th></tr></thead>
+          <tbody>
+            ${getPrivilegeLog(uid).length === 0
+              ? `<tr><td colspan="4"><div class="empty-state" style="padding:24px"><div class="empty-icon">📋</div><div class="empty-title">No changes logged yet</div></div></td></tr>`
+              : getPrivilegeLog(uid).map(log => `<tr>
+                  <td>${log.action === 'grant' ? '<span class="badge badge-green">✅ Granted</span>' : '<span class="badge badge-red">❌ Revoked</span>'}</td>
+                  <td class="fw-600 text-sm">${getPrivilegeLabel(log.privilegeId)}</td>
+                  <td class="text-sm">${UI.escHtml(DB.getUserName(log.changedBy))}</td>
+                  <td class="text-sm text-muted">${UI.formatDateTime(log.timestamp)}</td>
+                </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function togglePrivilege(userId, privilegeId, grant) {
+  const u = DB.getOne('users', userId);
+  if (!u) return;
+
+  let privileges = [...(u.privileges || [])];
+  if (grant) {
+    if (!privileges.includes(privilegeId)) privileges.push(privilegeId);
+  } else {
+    privileges = privileges.filter(p => p !== privilegeId);
+  }
+
+  DB.update('users', userId, { privileges });
+
+  // Log the change
+  DB.add('auditLog', {
+    id: DB.genId('log'),
+    action: 'privilege_change',
+    userId: user.id,
+    targetUserId: userId,
+    privilegeId,
+    privilegeAction: grant ? 'grant' : 'revoke',
+    details: `${grant ? 'Granted' : 'Revoked'} privilege "${getPrivilegeLabel(privilegeId)}" for ${DB.getUserName(userId)}`,
+    timestamp: new Date().toISOString()
+  });
+
+  UI.toast(`Privilege "${getPrivilegeLabel(privilegeId)}" ${grant ? 'granted' : 'revoked'}.`, grant ? 'success' : 'warning');
+
+  // Re-render panel to reflect changes
+  selectUser(userId);
+}
+
+function grantAll(userId) {
+  const applicable = ALL_PRIVILEGES.filter(p => p.grantableBy.includes(role)).map(p => p.id);
+  const u = DB.getOne('users', userId);
+  if (!u) return;
+  DB.update('users', userId, { privileges: applicable });
+  DB.add('auditLog', {
+    id: DB.genId('log'), action: 'privilege_change',
+    userId: user.id, targetUserId: userId,
+    details: `Granted ALL applicable privileges to ${DB.getUserName(userId)}`,
+    timestamp: new Date().toISOString()
+  });
+  UI.toast(`All applicable privileges granted to ${DB.getUserName(userId)}.`, 'success');
+  selectUser(userId);
+}
+
+function revokeAll(userId) {
+  if (!confirm('Revoke ALL extra privileges from this user? They will fall back to their default role rights.')) return;
+  DB.update('users', userId, { privileges: [] });
+  DB.add('auditLog', {
+    id: DB.genId('log'), action: 'privilege_change',
+    userId: user.id, targetUserId: userId,
+    details: `Revoked ALL privileges from ${DB.getUserName(userId)}`,
+    timestamp: new Date().toISOString()
+  });
+  UI.toast('All extra privileges revoked.', 'warning');
+  selectUser(userId);
+}
+
+function getPrivilegeLabel(id) {
+  return ALL_PRIVILEGES.find(p => p.id === id)?.label || id;
+}
+
+function getPrivilegeLog(userId) {
+  return DB.get('auditLog')
+    .filter(log => log.action === 'privilege_change' && log.targetUserId === userId && log.privilegeId)
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+    .slice(0, 10);
+}
+
+renderPage();
+</script>
+</body>
+</html>

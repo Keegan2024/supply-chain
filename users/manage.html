@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>User Management — SupplyNC</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<script src="../assets/js/mock-data.js"></script>
+<script src="../assets/js/auth.js"></script>
+<script>
+Auth.requireLogin();
+if (!['district','province','hq','admin'].includes(Auth.getRole())) { alert('Access denied.'); Auth.redirectToDashboard(); }
+
+const user = Auth.getUser();
+const role = user.role;
+let editingUserId = null;
+
+function getVisibleUsers() {
+  const all = DB.get('users');
+  if (role === 'admin')    return all;
+  if (role === 'hq')       return all.filter(u => ['province','district','facility'].includes(u.role));
+  if (role === 'province') return all.filter(u => {
+    const distIds = DB.get('districts').filter(d => d.provinceId === user.provinceId).map(d => d.id);
+    return u.role === 'district' && distIds.includes(u.districtId)
+      || (u.role === 'facility' && distIds.includes(u.districtId));
+  });
+  if (role === 'district') return all.filter(u => u.role === 'facility' && u.districtId === user.districtId);
+  return [];
+}
+
+function renderPage() {
+  const users   = getVisibleUsers();
+  const q       = window._q || '';
+  const rf      = window._rf || '';
+  const sf      = window._sf || '';
+
+  const filtered = users.filter(u =>
+    (!q  || u.name.toLowerCase().includes(q.toLowerCase()) || u.email.toLowerCase().includes(q.toLowerCase())) &&
+    (!rf || u.role === rf) &&
+    (!sf || u.status === sf)
+  );
+
+  const counts = { total: users.length, active: users.filter(u=>u.status==='active').length, pending: users.filter(u=>u.status==='pending').length };
+
+  UI.shell('User Management', 'users', `
+    <div class="d-flex justify-between align-center mb-16">
+      <div>
+        <h2 class="fw-700" style="font-size:1.1rem">User Management</h2>
+        <div class="text-muted text-sm">${counts.total} users · ${counts.active} active · ${counts.pending} pending</div>
+      </div>
+      ${role === 'admin' ? `<a href="signup-approvals.html" class="btn btn-primary">🔔 Signup Approvals ${counts.pending > 0 ? `(${counts.pending})` : ''}</a>` : ''}
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-grid mb-16">
+      <div class="stat-card"><div class="stat-icon blue">👥</div><div><div class="stat-value">${counts.total}</div><div class="stat-label">Total Users</div></div></div>
+      <div class="stat-card"><div class="stat-icon green">✅</div><div><div class="stat-value">${counts.active}</div><div class="stat-label">Active</div></div></div>
+      <div class="stat-card"><div class="stat-icon amber">⏳</div><div><div class="stat-value">${counts.pending}</div><div class="stat-label">Pending</div></div></div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-16">
+      <div class="card-body" style="padding:14px 20px">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <input type="text" class="form-control" style="width:240px" placeholder="Search name or email…"
+            value="${q}" oninput="window._q=this.value;renderPage()">
+          <select class="form-control" style="width:160px" onchange="window._rf=this.value;renderPage()">
+            <option value="">All Roles</option>
+            <option value="facility" ${rf==='facility'?'selected':''}>Facility Staff</option>
+            <option value="district" ${rf==='district'?'selected':''}>District Manager</option>
+            <option value="province" ${rf==='province'?'selected':''}>Province Manager</option>
+            <option value="hq" ${rf==='hq'?'selected':''}>HQ Management</option>
+            ${role === 'admin' ? `<option value="admin" ${rf==='admin'?'selected':''}>Administrator</option>` : ''}
+          </select>
+          <select class="form-control" style="width:140px" onchange="window._sf=this.value;renderPage()">
+            <option value="">All Status</option>
+            <option value="active" ${sf==='active'?'selected':''}>Active</option>
+            <option value="pending" ${sf==='pending'?'selected':''}>Pending</option>
+            <option value="suspended" ${sf==='suspended'?'selected':''}>Suspended</option>
+            <option value="rejected" ${sf==='rejected'?'selected':''}>Rejected</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Users Table -->
+    <div class="card">
+      <div class="table-wrapper">
+        <table>
+          <thead><tr>
+            <th>Name</th><th>Email</th><th>Role</th><th>Assigned To</th>
+            <th>Phone</th><th>Joined</th><th>Status</th><th>Actions</th>
+          </tr></thead>
+          <tbody>
+            ${filtered.length === 0
+              ? `<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">👥</div><div class="empty-title">No users found</div></div></td></tr>`
+              : filtered.map(u => {
+                  const assignedLabel = u.facilityId ? DB.getFacilityName(u.facilityId)
+                    : u.districtId ? DB.getDistrictName(u.districtId)
+                    : u.provinceId ? DB.getProvinceName(u.provinceId) : '—';
+                  const canEdit   = role === 'admin' || (role === 'district' && u.role === 'facility') || (role === 'province' && ['district','facility'].includes(u.role)) || (role === 'hq' && ['province','district'].includes(u.role));
+                  const canToggle = role === 'admin' || canEdit;
+                  return `<tr>
+                    <td>
+                      <div style="display:flex;align-items:center;gap:8px">
+                        <div style="width:32px;height:32px;border-radius:50%;background:var(--blue-600);color:white;display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:700;flex-shrink:0">${UI.escHtml(u.avatar)}</div>
+                        <div class="fw-600 text-sm">${UI.escHtml(u.name)}</div>
+                      </div>
+                    </td>
+                    <td class="text-sm text-muted">${u.email}</td>
+                    <td><span class="badge ${UI.roleBadgeClass(u.role)}">${UI.roleLabel(u.role)}</span></td>
+                    <td class="text-sm">${UI.escHtml(assignedLabel)}</td>
+                    <td class="text-sm text-muted">${u.phone || '—'}</td>
+                    <td class="text-sm text-muted">${UI.formatDate(u.createdAt)}</td>
+                    <td>${UI.statusBadge(u.status)}</td>
+                    <td>
+                      <div style="display:flex;gap:4px;flex-wrap:wrap">
+                        ${canEdit ? `<button class="btn btn-outline btn-sm" onclick="openEdit('${u.id}')">✏️ Edit</button>` : ''}
+                        ${canToggle && u.status === 'active' ? `<button class="btn btn-danger btn-sm" onclick="suspendUser('${u.id}')">Suspend</button>` : ''}
+                        ${canToggle && u.status === 'suspended' ? `<button class="btn btn-success btn-sm" onclick="activateUser('${u.id}')">Activate</button>` : ''}
+                        ${role === 'admin' && u.status === 'pending' ? `<button class="btn btn-success btn-sm" onclick="approveUser('${u.id}')">Approve</button>` : ''}
+                      </div>
+                    </td>
+                  </tr>`;
+                }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Edit User Modal -->
+    <div class="modal-overlay" id="modal-edit">
+      <div class="modal modal-lg">
+        <div class="modal-header">
+          <span class="modal-title">✏️ Edit User</span>
+          <button class="modal-close" onclick="UI.closeModal('modal-edit')">✕</button>
+        </div>
+        <div class="modal-body" id="edit-body"></div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="UI.closeModal('modal-edit')">Cancel</button>
+          <button class="btn btn-primary" onclick="saveEdit()">Save Changes</button>
+        </div>
+      </div>
+    </div>
+  `);
+}
+
+function openEdit(id) {
+  editingUserId = id;
+  const u = DB.getOne('users', id);
+  if (!u) return;
+
+  document.getElementById('edit-body').innerHTML = `
+    <div class="form-row cols-2">
+      <div class="form-group">
+        <label class="form-label">Full Name <span class="required">*</span></label>
+        <input type="text" id="edit-name" class="form-control" value="${UI.escHtml(u.name)}">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Phone</label>
+        <input type="text" id="edit-phone" class="form-control" value="${UI.escHtml(u.phone||'')}">
+      </div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Email</label>
+      <input type="email" id="edit-email" class="form-control" value="${u.email}" ${role !== 'admin' ? 'readonly' : ''}>
+    </div>
+    <div class="form-row cols-2">
+      <div class="form-group">
+        <label class="form-label">Status</label>
+        <select id="edit-status" class="form-control">
+          <option value="active" ${u.status==='active'?'selected':''}>Active</option>
+          <option value="suspended" ${u.status==='suspended'?'selected':''}>Suspended</option>
+          ${role === 'admin' ? `<option value="rejected" ${u.status==='rejected'?'selected':''}>Rejected</option>` : ''}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Role</label>
+        <input type="text" class="form-control" value="${UI.roleLabel(u.role)}" readonly>
+      </div>
+    </div>
+    <div class="form-group mb-0">
+      <label class="form-label">Reset Password (leave blank to keep current)</label>
+      <input type="password" id="edit-pw" class="form-control" placeholder="New password">
+    </div>
+  `;
+  UI.openModal('modal-edit');
+}
+
+function saveEdit() {
+  const u = DB.getOne('users', editingUserId);
+  if (!u) return;
+  const name   = document.getElementById('edit-name').value.trim();
+  const phone  = document.getElementById('edit-phone').value.trim();
+  const email  = document.getElementById('edit-email').value.trim();
+  const status = document.getElementById('edit-status').value;
+  const pw     = document.getElementById('edit-pw').value;
+
+  if (!name)  { UI.toast('Name is required.', 'error'); return; }
+  if (!email) { UI.toast('Email is required.', 'error'); return; }
+
+  const updates = { name, phone, email, status, avatar: name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase() };
+  if (pw) updates.password = pw;
+  DB.update('users', editingUserId, updates);
+  UI.closeModal('modal-edit');
+  UI.toast('User updated successfully.', 'success');
+  renderPage();
+}
+
+function suspendUser(id) {
+  if (!confirm('Suspend this user account?')) return;
+  DB.update('users', id, { status: 'suspended' });
+  UI.toast('User account suspended.', 'warning');
+  renderPage();
+}
+
+function activateUser(id) {
+  DB.update('users', id, { status: 'active' });
+  UI.toast('User account activated.', 'success');
+  renderPage();
+}
+
+function approveUser(id) {
+  DB.update('users', id, { status: 'active' });
+  UI.toast('User approved and account activated.', 'success');
+  renderPage();
+}
+
+renderPage();
+</script>
+</body>
+</html>

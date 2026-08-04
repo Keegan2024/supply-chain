@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dispense Commodities — SupplyNC</title>
+  <link rel="stylesheet" href="assets/css/style.css">
+  <style>
+    .dispense-row { display:grid; grid-template-columns:2fr 1fr 1fr 1fr 100px 80px; gap:10px; align-items:center; padding:10px 0; border-bottom:1px solid var(--slate-100); }
+    .dispense-row:last-child { border-bottom:none; }
+    .dispense-header { font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.6px; color:var(--slate-500); padding:8px 0; border-bottom:2px solid var(--slate-300); margin-bottom:4px; display:grid; grid-template-columns:2fr 1fr 1fr 1fr 100px 80px; gap:10px; }
+    .balance-pill { background:var(--green-100); color:var(--green-600); padding:3px 10px; border-radius:99px; font-size:.78rem; font-weight:600; }
+    .balance-pill.low { background:var(--red-100); color:var(--red-600); }
+    .log-row td { padding:9px 12px; }
+    .mini-in { width:80px; padding:5px 8px; border:1px solid var(--slate-300); border-radius:var(--radius-sm); font-size:.84rem; text-align:center; }
+    .mini-in:focus { outline:none; border-color:var(--blue-500); box-shadow:0 0 0 2px rgba(59,130,196,.15); }
+  </style>
+</head>
+<body>
+<script src="assets/js/mock-data.js"></script>
+<script src="assets/js/auth.js"></script>
+<script>
+Auth.requireLogin();
+if (!['facility','district','province','hq','admin'].includes(Auth.getRole())) {
+  alert('Access denied.'); Auth.redirectToDashboard();
+}
+
+const user       = Auth.getUser();
+const role       = user.role;
+const facilityId = user.facilityId || 'fac_01';
+const facility   = DB.getOne('facilities', facilityId) || { name:'My Facility' };
+const today      = new Date().toISOString().split('T')[0];
+
+function getDispenses() {
+  return (DB.get('dispenses') || []).filter(d => d.facilityId === facilityId);
+}
+
+function renderPage() {
+  const stocks    = DB.getFacilityStockSummary(facilityId);
+  const dispenses = getDispenses();
+  const todayDisp = dispenses.filter(d => d.date === today);
+  const totalToday= todayDisp.reduce((s,d)=>s+d.quantity,0);
+
+  UI.shell('Dispense Commodities', 'dispense', `
+    <div class="d-flex align-center mb-16" style="gap:10px">
+      <button class="btn btn-ghost btn-sm" onclick="history.back()">← Back</button>
+      <div>
+        <h2 class="fw-700" style="font-size:1.05rem">Daily Commodity Dispense</h2>
+        <div class="text-muted text-sm">${facility.name} · ${new Date().toLocaleDateString('en-GB',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})}</div>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-grid mb-16">
+      <div class="stat-card"><div class="stat-icon blue">📦</div><div><div class="stat-value">${stocks.length}</div><div class="stat-label">Available Items</div></div></div>
+      <div class="stat-card"><div class="stat-icon teal">📤</div><div><div class="stat-value">${todayDisp.length}</div><div class="stat-label">Dispenses Today</div></div></div>
+      <div class="stat-card"><div class="stat-icon amber">🔢</div><div><div class="stat-value">${totalToday}</div><div class="stat-label">Total Units Dispensed</div></div></div>
+    </div>
+
+    <!-- Dispense Form -->
+    <div class="card mb-20">
+      <div class="card-header">
+        <div><div class="card-title">📤 Record Dispense</div><div class="card-subtitle">Enter quantities dispensed for each commodity today</div></div>
+        <button class="btn btn-primary" onclick="saveDispense()">✅ Record Dispense</button>
+      </div>
+      <div class="card-body">
+        ${stocks.length === 0
+          ? `<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No stock available to dispense</div></div>`
+          : `
+          <div class="dispense-header">
+            <span>Commodity</span><span>Available</span><span>Unit</span><span>Batch / Expiry</span><span>Qty to Dispense</span><span>Recipient</span>
+          </div>
+          <div id="dispense-form">
+            ${stocks.map(s => {
+              const com   = DB.getOne('commodities', s.commodityId);
+              const isLow = com && s.closingBalance < (com.minThreshold||0);
+              return `<div class="dispense-row" data-commodity="${s.commodityId}" data-balance="${s.closingBalance}">
+                <div>
+                  <div class="fw-600 text-sm">${escHtml(DB.getCommodityName(s.commodityId))}</div>
+                  ${com?.category ? `<div class="text-xs text-muted">${com.category}</div>` : ''}
+                </div>
+                <div><span class="balance-pill ${isLow?'low':''}">${s.closingBalance.toLocaleString()}</span></div>
+                <div class="text-sm text-muted">${com?.unit||'—'}</div>
+                <div>
+                  <div class="text-xs td-mono text-muted">${s.batchNo||'—'}</div>
+                  <div class="text-xs text-muted">${s.expiryDate ? 'Exp: '+formatDate(s.expiryDate) : ''}</div>
+                </div>
+                <div>
+                  <input type="number" class="mini-in disp-qty" min="0" max="${s.closingBalance}" value="0"
+                    oninput="validateQty(this,${s.closingBalance})"
+                    placeholder="0" data-max="${s.closingBalance}">
+                  <div class="text-xs text-danger" id="err-${s.commodityId}" style="display:none">Exceeds stock</div>
+                </div>
+                <div>
+                  <input type="text" class="mini-in disp-recipient" style="width:70px" placeholder="ID/Name">
+                </div>
+              </div>`;
+            }).join('')}
+          </div>
+          <div class="form-row cols-2 mt-16">
+            <div class="form-group">
+              <label class="form-label">Dispense Purpose / Note</label>
+              <input type="text" id="disp-note" class="form-control" placeholder="e.g. OPD patients, ANC clinic, Emergency">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Dispensed By</label>
+              <input type="text" id="disp-by" class="form-control" value="${escHtml(user.name)}" readonly>
+            </div>
+          </div>`}
+      </div>
+    </div>
+
+    <!-- Dispense Log -->
+    <div class="card">
+      <div class="card-header">
+        <div><div class="card-title">📋 Dispense Log</div><div class="card-subtitle">All dispenses recorded at this facility</div></div>
+        <div class="d-flex gap-8">
+          <input type="date" id="log-date-filter" class="form-control" style="width:160px" value="${today}" onchange="renderPage()">
+          <button class="btn btn-outline btn-sm" onclick="downloadLog()">⬇ Download</button>
+        </div>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr>
+            <th>Date & Time</th><th>Commodity</th><th>Batch</th>
+            <th>Qty Dispensed</th><th>Recipient</th><th>Purpose</th><th>Dispensed By</th><th>Balance After</th>
+          </tr></thead>
+          <tbody>
+            ${filterLog(dispenses).length === 0
+              ? `<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">📋</div><div class="empty-title">No dispenses recorded</div></div></td></tr>`
+              : filterLog(dispenses).sort((a,b)=>new Date(b.timestamp)-new Date(a.timestamp)).map(d => `<tr>
+                  <td class="text-sm">${formatDateTime(d.timestamp)}</td>
+                  <td class="fw-600 text-sm">${escHtml(DB.getCommodityName(d.commodityId))}</td>
+                  <td class="td-mono text-sm text-muted">${d.batchNo||'—'}</td>
+                  <td><span class="fw-700 text-danger">${d.quantity}</span></td>
+                  <td class="text-sm">${escHtml(d.recipient||'—')}</td>
+                  <td class="text-sm text-muted">${escHtml(d.note||'—')}</td>
+                  <td class="text-sm">${escHtml(d.dispensedBy)}</td>
+                  <td class="text-sm fw-600">${d.balanceAfter}</td>
+                </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `);
+}
+
+function validateQty(inp, max) {
+  const comId = inp.closest('[data-commodity]').dataset.commodity;
+  const val   = parseInt(inp.value)||0;
+  const errEl = document.getElementById('err-'+comId);
+  if (val > max) {
+    inp.style.borderColor = 'var(--red-600)';
+    if (errEl) errEl.style.display = 'block';
+  } else {
+    inp.style.borderColor = '';
+    if (errEl) errEl.style.display = 'none';
+  }
+}
+
+function saveDispense() {
+  const rows      = document.querySelectorAll('#dispense-form .dispense-row');
+  const note      = document.getElementById('disp-note')?.value.trim() || '';
+  const timestamp = new Date().toISOString();
+  let savedCount  = 0;
+  let hasError    = false;
+
+  rows.forEach(row => {
+    const comId    = row.dataset.commodity;
+    const balance  = parseInt(row.dataset.balance) || 0;
+    const qty      = parseInt(row.querySelector('.disp-qty').value) || 0;
+    const recipient= row.querySelector('.disp-recipient')?.value.trim() || '';
+    if (qty <= 0) return;
+    if (qty > balance) { hasError = true; return; }
+
+    // Get stock record for batch/expiry
+    const stockRec = DB.get('facilityStock').find(s => s.facilityId===facilityId && s.commodityId===comId);
+    const newBalance = balance - qty;
+
+    // Save dispense record
+    DB.add('dispenses', {
+      id: DB.genId('disp'),
+      facilityId, commodityId: comId,
+      quantity: qty,
+      balanceAfter: newBalance,
+      batchNo: stockRec?.batchNo || '—',
+      recipient, note,
+      dispensedBy: user.name,
+      dispensedById: user.id,
+      date: today,
+      timestamp
+    });
+
+    // Update facility stock
+    if (stockRec) {
+      DB.update('facilityStock', stockRec.id, {
+        consumed: (stockRec.consumed||0) + qty,
+        closingBalance: newBalance,
+        lastUpdated: timestamp
+      });
+    }
+
+    savedCount++;
+  });
+
+  if (hasError) { UI.toast('Some quantities exceed available stock. Correct and retry.', 'error'); return; }
+  if (savedCount === 0) { UI.toast('Enter at least one quantity to dispense.', 'warning'); return; }
+
+  UI.toast(`${savedCount} dispense record${savedCount>1?'s':''} saved successfully.`, 'success');
+  renderPage();
+}
+
+function filterLog(dispenses) {
+  const dateFilter = document.getElementById('log-date-filter')?.value;
+  if (!dateFilter) return dispenses;
+  return dispenses.filter(d => d.date === dateFilter);
+}
+
+function downloadLog() {
+  const dispenses = filterLog(getDispenses());
+  const dateFilter= document.getElementById('log-date-filter')?.value || today;
+  const headers   = ['Date/Time','Commodity','Batch No','Qty Dispensed','Recipient','Purpose','Dispensed By','Balance After'];
+  const rows      = dispenses.map(d => [
+    formatDateTime(d.timestamp), DB.getCommodityName(d.commodityId), d.batchNo||'',
+    d.quantity, d.recipient||'', d.note||'', d.dispensedBy, d.balanceAfter
+  ].map(v=>`"${v}"`).join(','));
+  const csv  = [headers.join(','),...rows].join('\n');
+  const blob = new Blob([csv],{type:'text/csv'});
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = `SupplyNC_DispenseLog_${dateFilter}.csv`;
+  a.click();
+  UI.toast('Log downloaded.', 'success');
+}
+
+function formatDate(iso){ return iso ? new Date(iso).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}) : '—'; }
+function formatDateTime(iso){ return iso ? new Date(iso).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'; }
+function escHtml(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// Ensure dispenses store exists
+if (!localStorage.getItem('sc_dispenses')) localStorage.setItem('sc_dispenses','[]');
+
+renderPage();
+</script>
+</body>
+</html>

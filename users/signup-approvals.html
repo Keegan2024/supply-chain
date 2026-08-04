@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Signup Approvals — SupplyNC</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<script src="../assets/js/mock-data.js"></script>
+<script src="../assets/js/auth.js"></script>
+<script>
+Auth.requireLogin();
+if (Auth.getRole() !== 'admin') { alert('Access denied.'); Auth.redirectToDashboard(); }
+
+const user = Auth.getUser();
+
+function renderPage() {
+  const pending  = DB.get('users').filter(u => u.status === 'pending');
+  const rejected = DB.get('users').filter(u => u.status === 'rejected');
+  const tab      = window._tab || 'pending';
+
+  UI.shell('Signup Approvals', 'approvals', `
+    <div class="mb-16">
+      <h2 class="fw-700" style="font-size:1.1rem">Signup Approvals</h2>
+      <div class="text-muted text-sm">All new accounts require your approval before activation</div>
+    </div>
+
+    ${pending.length > 0 ? `
+      <div class="alert alert-warning">
+        <span class="alert-icon">🔔</span>
+        <div><strong>${pending.length} account${pending.length>1?'s':''} awaiting your review.</strong></div>
+      </div>` : `
+      <div class="alert alert-success">
+        <span class="alert-icon">✅</span>
+        <div><strong>All caught up!</strong> No pending signups at this time.</div>
+      </div>`}
+
+    <div class="tabs">
+      <button class="tab-btn ${tab==='pending'?'active':''}" onclick="window._tab='pending';renderPage()">
+        ⏳ Pending <span class="nav-badge" style="position:relative;margin-left:6px;background:var(--amber-600)">${pending.length}</span>
+      </button>
+      <button class="tab-btn ${tab==='rejected'?'active':''}" onclick="window._tab='rejected';renderPage()">
+        ❌ Rejected (${rejected.length})
+      </button>
+    </div>
+
+    <div class="card">
+      <div class="table-wrapper">
+        <table>
+          <thead><tr>
+            <th>Name</th><th>Email</th><th>Role</th><th>Assigned To</th>
+            <th>Phone</th><th>Applied</th><th>Actions</th>
+          </tr></thead>
+          <tbody>
+            ${(tab === 'pending' ? pending : rejected).length === 0
+              ? `<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">${tab==='pending'?'✅':'📋'}</div><div class="empty-title">${tab==='pending'?'No pending signups':'No rejected signups'}</div></div></td></tr>`
+              : (tab === 'pending' ? pending : rejected).map(u => {
+                  const assignedLabel = u.facilityId ? DB.getFacilityName(u.facilityId)
+                    : u.districtId ? DB.getDistrictName(u.districtId)
+                    : u.provinceId ? DB.getProvinceName(u.provinceId) : '—';
+                  return `<tr>
+                    <td>
+                      <div style="display:flex;align-items:center;gap:8px">
+                        <div style="width:34px;height:34px;border-radius:50%;background:var(--blue-600);color:white;display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:700;flex-shrink:0">${UI.escHtml(u.avatar)}</div>
+                        <div class="fw-600 text-sm">${UI.escHtml(u.name)}</div>
+                      </div>
+                    </td>
+                    <td class="text-sm">${u.email}</td>
+                    <td><span class="badge ${UI.roleBadgeClass(u.role)}">${UI.roleLabel(u.role)}</span></td>
+                    <td class="text-sm">${UI.escHtml(assignedLabel)}</td>
+                    <td class="text-sm text-muted">${u.phone || '—'}</td>
+                    <td class="text-sm text-muted">${UI.formatDateTime(u.createdAt)}</td>
+                    <td>
+                      <div style="display:flex;gap:6px">
+                        <button class="btn btn-outline btn-sm" onclick="viewDetails('${u.id}')">👁 View</button>
+                        ${tab === 'pending' ? `
+                          <button class="btn btn-success btn-sm" onclick="approve('${u.id}')">✅ Approve</button>
+                          <button class="btn btn-danger btn-sm" onclick="reject('${u.id}')">❌ Reject</button>
+                        ` : `
+                          <button class="btn btn-success btn-sm" onclick="approve('${u.id}')">♻️ Reinstate</button>
+                        `}
+                      </div>
+                    </td>
+                  </tr>`;
+                }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- View Details Modal -->
+    <div class="modal-overlay" id="modal-view">
+      <div class="modal">
+        <div class="modal-header">
+          <span class="modal-title">Account Application</span>
+          <button class="modal-close" onclick="UI.closeModal('modal-view')">✕</button>
+        </div>
+        <div class="modal-body" id="view-body"></div>
+        <div class="modal-footer" id="view-footer">
+          <button class="btn btn-outline" onclick="UI.closeModal('modal-view')">Close</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Reject Reason Modal -->
+    <div class="modal-overlay" id="modal-reject">
+      <div class="modal">
+        <div class="modal-header">
+          <span class="modal-title">❌ Reject Signup</span>
+          <button class="modal-close" onclick="UI.closeModal('modal-reject')">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="alert alert-warning">
+            <span class="alert-icon">⚠️</span>
+            <div>The applicant will be notified. They can contact the administrator if they believe this is an error.</div>
+          </div>
+          <input type="hidden" id="reject-uid">
+          <div class="form-group mb-0">
+            <label class="form-label">Reason for Rejection <span class="required">*</span></label>
+            <textarea id="reject-reason" class="form-control" rows="3" placeholder="e.g. Duplicate account, invalid facility assignment…"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="UI.closeModal('modal-reject')">Cancel</button>
+          <button class="btn btn-danger" onclick="confirmReject()">❌ Reject Account</button>
+        </div>
+      </div>
+    </div>
+  `);
+}
+
+function viewDetails(id) {
+  const u = DB.getOne('users', id);
+  if (!u) return;
+  const assignedLabel = u.facilityId ? `Facility: ${DB.getFacilityName(u.facilityId)}`
+    : u.districtId ? `District: ${DB.getDistrictName(u.districtId)}`
+    : u.provinceId ? `Province: ${DB.getProvinceName(u.provinceId)}` : '—';
+
+  document.getElementById('view-body').innerHTML = `
+    <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;padding:16px;background:var(--slate-50);border-radius:var(--radius-sm)">
+      <div style="width:56px;height:56px;border-radius:50%;background:var(--blue-600);color:white;display:flex;align-items:center;justify-content:center;font-size:1.2rem;font-weight:700;flex-shrink:0">${UI.escHtml(u.avatar)}</div>
+      <div>
+        <div class="fw-700" style="font-size:1.1rem">${UI.escHtml(u.name)}</div>
+        <div class="text-sm text-muted">${u.email}</div>
+        <div class="mt-8"><span class="badge ${UI.roleBadgeClass(u.role)}">${UI.roleLabel(u.role)}</span> ${UI.statusBadge(u.status)}</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div><div class="text-xs text-muted">Phone</div><div class="fw-600 text-sm">${u.phone || '—'}</div></div>
+      <div><div class="text-xs text-muted">Applied</div><div class="fw-600 text-sm">${UI.formatDateTime(u.createdAt)}</div></div>
+      <div><div class="text-xs text-muted">Assigned To</div><div class="fw-600 text-sm">${UI.escHtml(assignedLabel)}</div></div>
+      <div><div class="text-xs text-muted">User ID</div><div class="fw-600 text-sm td-mono">${u.id}</div></div>
+    </div>
+  `;
+
+  document.getElementById('view-footer').innerHTML = `
+    <button class="btn btn-outline" onclick="UI.closeModal('modal-view')">Close</button>
+    ${u.status === 'pending' ? `
+      <button class="btn btn-danger" onclick="UI.closeModal('modal-view');reject('${u.id}')">❌ Reject</button>
+      <button class="btn btn-success" onclick="UI.closeModal('modal-view');approve('${u.id}')">✅ Approve</button>
+    ` : ''}
+  `;
+
+  UI.openModal('modal-view');
+}
+
+function approve(id) {
+  if (!confirm('Approve and activate this account?')) return;
+  DB.update('users', id, { status: 'active', approvedBy: user.id, approvedAt: new Date().toISOString() });
+  DB.add('auditLog', {
+    id: DB.genId('log'), action: 'signup_approved',
+    userId: user.id, details: `Account approved: ${DB.getUserName(id)}`,
+    timestamp: new Date().toISOString()
+  });
+  UI.toast('Account approved. User can now sign in.', 'success');
+  renderPage();
+}
+
+function reject(id) {
+  document.getElementById('reject-uid').value = id;
+  document.getElementById('reject-reason').value = '';
+  UI.openModal('modal-reject');
+}
+
+function confirmReject() {
+  const id     = document.getElementById('reject-uid').value;
+  const reason = document.getElementById('reject-reason').value.trim();
+  if (!reason) { UI.toast('Provide a rejection reason.', 'error'); return; }
+  DB.update('users', id, { status: 'rejected', rejectionReason: reason });
+  DB.add('auditLog', {
+    id: DB.genId('log'), action: 'signup_rejected',
+    userId: user.id, details: `Account rejected: ${DB.getUserName(id)} — ${reason}`,
+    timestamp: new Date().toISOString()
+  });
+  UI.closeModal('modal-reject');
+  UI.toast('Account rejected. Applicant notified.', 'warning');
+  renderPage();
+}
+
+renderPage();
+</script>
+</body>
+</html>

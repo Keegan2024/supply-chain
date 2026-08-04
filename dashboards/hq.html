@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HQ Dashboard — SupplyNC</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<script src="../assets/js/mock-data.js"></script>
+<script src="../assets/js/auth.js"></script>
+<script>
+Auth.requireLogin();
+if (!['hq','admin'].includes(Auth.getRole())) Auth.redirectToDashboard();
+
+const provinces    = DB.get('provinces');
+const districts    = DB.get('districts');
+const facilities   = DB.get('facilities');
+const allUsers     = DB.get('users');
+const reports      = DB.get('reports');
+const requisitions = DB.get('requisitions');
+const hqStock      = DB.get('warehouseStock').filter(w => w.warehouseType === 'hq');
+const commodities  = DB.get('commodities');
+
+const pendingRpts   = reports.filter(r => r.status === 'pending').length;
+const approvedRpts  = reports.filter(r => r.status === 'approved').length;
+const pendingReqs   = requisitions.filter(r => r.status === 'pending').length;
+const activeUsers   = allUsers.filter(u => u.status === 'active').length;
+
+// Province summary
+const provSummary = provinces.map(p => {
+  const pDistricts  = districts.filter(d => d.provinceId === p.id);
+  const pFacilities = facilities.filter(f => pDistricts.some(d => d.id === f.districtId));
+  const pReports    = reports.filter(r => pDistricts.some(d => d.id === r.districtId));
+  return { ...p, districtCount: pDistricts.length, facilityCount: pFacilities.length, pendingReports: pReports.filter(r=>r.status==='pending').length };
+});
+
+UI.shell('HQ Dashboard', 'dashboard', `
+  <div class="mb-16">
+    <h2 class="fw-700" style="font-size:1.2rem">Headquarters — National Overview</h2>
+    <span class="text-muted text-sm">Full system visibility across all provinces, districts and facilities</span>
+  </div>
+
+  ${pendingRpts > 0 ? `
+    <div class="alert alert-warning">
+      <span class="alert-icon">📋</span>
+      <div><strong>${pendingRpts} report${pendingRpts > 1 ? 's' : ''} pending review across the system.</strong>
+        <a href="../reports/review.html" style="margin-left:8px;color:var(--amber-600);font-weight:600">Review →</a></div>
+    </div>` : ''}
+
+  <!-- National Stats -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-icon blue">🌍</div>
+      <div><div class="stat-value">${provinces.length}</div><div class="stat-label">Provinces</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon teal">🗺️</div>
+      <div><div class="stat-value">${districts.length}</div><div class="stat-label">Districts</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon blue">🏥</div>
+      <div><div class="stat-value">${facilities.length}</div><div class="stat-label">Facilities</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon green">👥</div>
+      <div><div class="stat-value">${activeUsers}</div><div class="stat-label">Active Users</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon amber">📋</div>
+      <div><div class="stat-value">${pendingRpts}</div><div class="stat-label">Pending Reports</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon teal">✅</div>
+      <div><div class="stat-value">${approvedRpts}</div><div class="stat-label">Approved Reports</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon amber">📤</div>
+      <div><div class="stat-value">${pendingReqs}</div><div class="stat-label">Pending Requisitions</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon blue">🏭</div>
+      <div><div class="stat-value">${hqStock.length}</div><div class="stat-label">HQ Warehouse Lines</div></div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:20px">
+    <!-- Province Summary -->
+    <div class="card">
+      <div class="card-header">
+        <div><div class="card-title">🌍 Province Summary</div><div class="card-subtitle">National breakdown</div></div>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>Province</th><th>Districts</th><th>Facilities</th><th>Pending Reports</th><th>Manager</th></tr></thead>
+          <tbody>
+            ${provSummary.map(p => `<tr>
+              <td class="fw-600 text-sm">${UI.escHtml(p.name)}</td>
+              <td class="text-sm">${p.districtCount}</td>
+              <td class="text-sm">${p.facilityCount}</td>
+              <td>${p.pendingReports > 0 ? `<span class="badge badge-amber">${p.pendingReports}</span>` : '<span class="badge badge-green">Clear</span>'}</td>
+              <td class="text-sm text-muted">${p.managerId ? UI.escHtml(DB.getUserName(p.managerId)) : '—'}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- HQ Warehouse -->
+    <div class="card">
+      <div class="card-header">
+        <div><div class="card-title">🏭 HQ Central Warehouse</div></div>
+        <a href="../stock/warehouse.html" class="btn btn-outline btn-sm">Manage</a>
+      </div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>Commodity</th><th>Quantity</th><th>Expiry</th></tr></thead>
+          <tbody>
+            ${hqStock.length === 0
+              ? `<tr><td colspan="3"><div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No HQ stock</div></div></td></tr>`
+              : hqStock.map(ws => `<tr>
+                  <td class="fw-600 text-sm">${UI.escHtml(DB.getCommodityName(ws.commodityId))}</td>
+                  <td class="fw-600">${ws.quantity.toLocaleString()}</td>
+                  <td class="text-sm text-muted">${ws.expiryDate ? UI.formatDate(ws.expiryDate) : '—'}</td>
+                </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent Reports Across System -->
+  <div class="card mt-16">
+    <div class="card-header">
+      <div><div class="card-title">📋 Recent Reports — All Levels</div></div>
+      <a href="../reports/review.html" class="btn btn-outline btn-sm">View All</a>
+    </div>
+    <div class="table-wrapper">
+      <table>
+        <thead><tr><th>Period</th><th>Submitted By</th><th>Facility</th><th>District</th><th>Submitted</th><th>Status</th></tr></thead>
+        <tbody>
+          ${reports.length === 0
+            ? `<tr><td colspan="6"><div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No reports</div></div></td></tr>`
+            : reports.slice(-8).reverse().map(r => `<tr>
+                <td class="fw-600 text-sm">${r.period}</td>
+                <td class="text-sm">${UI.escHtml(DB.getUserName(r.submittedBy))}</td>
+                <td class="text-sm">${UI.escHtml(DB.getFacilityName(r.facilityId))}</td>
+                <td class="text-sm">${UI.escHtml(DB.getDistrictName(r.districtId))}</td>
+                <td class="text-sm text-muted">${UI.formatDate(r.submittedAt)}</td>
+                <td>${UI.statusBadge(r.status)}</td>
+              </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Quick Actions -->
+  <div class="card mt-16">
+    <div class="card-header"><div class="card-title">⚡ Quick Actions</div></div>
+    <div class="card-body">
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <a href="../reports/review.html" class="btn btn-primary">✅ Review Reports</a>
+        <a href="../requisitions/request.html" class="btn btn-teal">📤 Manage Requisitions</a>
+        <a href="../stock/warehouse.html" class="btn btn-outline">🏭 HQ Warehouse</a>
+        <a href="../commodities/manage.html" class="btn btn-outline">💊 Commodities</a>
+        <a href="../stock/facility-stock.html" class="btn btn-outline">🏥 Facility Stock</a>
+        <a href="../reports/window-manager.html" class="btn btn-outline">📅 Report Windows</a>
+        <a href="../users/manage.html" class="btn btn-outline">👥 Manage Users</a>
+        <a href="../dashboards/province.html" class="btn btn-outline">🌍 Province View</a>
+      </div>
+    </div>
+  </div>
+`);
+</script>
+</body>
+</html>

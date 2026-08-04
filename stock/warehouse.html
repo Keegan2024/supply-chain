@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Warehouse — SupplyNC</title>
+  <link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body>
+<script src="../assets/js/mock-data.js"></script>
+<script src="../assets/js/auth.js"></script>
+<script>
+Auth.requireLogin();
+const user = Auth.getUser();
+const role = user.role;
+
+function getWH() {
+  if (role==='facility') return { type:'facility', id:user.facilityId||'fac_01', label:DB.getFacilityName(user.facilityId||'fac_01') };
+  if (role==='district') return { type:'district', id:user.districtId||'dist_01', label:DB.getDistrictName(user.districtId||'dist_01') };
+  if (role==='province') return { type:'province', id:user.provinceId||'prov_01', label:DB.getProvinceName(user.provinceId||'prov_01') };
+  return { type:'hq', id:'hq_main', label:'HQ Central Warehouse' };
+}
+const wh = getWH();
+
+function getStock() {
+  if (wh.type==='facility') {
+    return DB.get('facilityStock').filter(s=>s.facilityId===wh.id).map(s=>({
+      id:s.id, commodityId:s.commodityId, quantity:s.closingBalance,
+      batchNo:s.batchNo, expiryDate:s.expiryDate, lastUpdated:s.lastUpdated, addedAt:s.addedAt||s.lastUpdated, addedBy:s.addedBy||null, source:'facility'
+    }));
+  }
+  return DB.get('warehouseStock').filter(w=>w.warehouseType===wh.type&&w.warehouseId===wh.id);
+}
+
+// Check if warehouse has ever been loaded (baseline submitted)
+function getBaseline() {
+  return (DB.get('warehouseBaselines')||[]).find(b=>b.warehouseType===wh.type&&b.warehouseId===wh.id&&b.status==='approved');
+}
+function getPendingBaseline() {
+  return (DB.get('warehouseBaselines')||[]).find(b=>b.warehouseType===wh.type&&b.warehouseId===wh.id&&b.status==='pending');
+}
+
+function renderPage() {
+  const stock      = getStock();
+  const commodities= DB.get('commodities');
+  const archived   = DB.get('archivedStock').filter(a=>a.warehouseType===wh.type&&a.warehouseId===wh.id);
+  const baseline   = getBaseline();
+  const pending    = getPendingBaseline();
+  const today      = new Date();
+  const in30       = new Date(today.getTime()+30*24*60*60*1000);
+  const tab        = window._whtab||'active';
+  const isManager  = ['district','province','hq','admin'].includes(role);
+  const isFacility = role==='facility';
+
+  const lowItems      = stock.filter(s=>{const c=DB.getOne('commodities',s.commodityId);return c&&s.quantity<c.minThreshold;});
+  const expiringItems = stock.filter(s=>s.expiryDate&&new Date(s.expiryDate)<=in30&&new Date(s.expiryDate)>=today);
+  const expiredItems  = stock.filter(s=>s.expiryDate&&new Date(s.expiryDate)<today);
+
+  UI.shell(isFacility?'My Stock':'Warehouse','warehouse',`
+    <div class="d-flex justify-between align-center mb-16">
+      <div>
+        <h2 class="fw-700" style="font-size:1.1rem">${wh.label}</h2>
+        <div class="text-muted text-sm">${wh.type} warehouse · ${stock.length} active lines${baseline?' · <span style="color:var(--green-600);font-weight:600">✓ Baseline approved</span>':''}</div>
+      </div>
+      <div class="d-flex gap-8">
+        ${!baseline && !pending && role!=='admin' ? `<button class="btn btn-primary" onclick="openFirstLoad()">📦 First Load Commodities</button>` : ''}
+        ${baseline && isManager ? `<button class="btn btn-primary" onclick="UI.openModal('modal-add-stock')">+ Add Stock</button>` : ''}
+        ${baseline && isFacility ? `<a href="../requisitions/request.html" class="btn btn-teal">📤 Request Resupply</a>` : ''}
+        ${isFacility ? `<a href="../dispense.html" class="btn btn-outline">💉 Dispense</a>` : ''}
+      </div>
+    </div>
+
+    ${pending ? `<div class="alert alert-warning"><span class="alert-icon">⏳</span>
+      <div><strong>First-load baseline pending approval</strong> by your line manager. Stock will be usable once approved.</div></div>` : ''}
+    ${!baseline && !pending && role!=='admin' ? `<div class="alert alert-info"><span class="alert-icon">📦</span>
+      <div><strong>First time use:</strong> Load all available commodities with their quantities. This will be submitted to your line manager as a baseline for approval before stock becomes active.</div></div>` : ''}
+
+    ${lowItems.length>0?`<div class="alert alert-warning"><span class="alert-icon">⚠️</span><div><strong>${lowItems.length} item${lowItems.length>1?'s':''} below threshold:</strong> ${lowItems.map(s=>DB.getCommodityName(s.commodityId)).join(', ')}</div></div>`:''}
+    ${expiredItems.length>0?`<div class="alert alert-danger"><span class="alert-icon">🚫</span><div><strong>${expiredItems.length} EXPIRED — archive to remove from active stock.</strong> <button class="btn btn-danger btn-sm" onclick="archiveAllExpired()">Archive All Expired</button></div></div>`:''}
+
+    <div class="stats-grid mb-16">
+      <div class="stat-card"><div class="stat-icon blue">📦</div><div><div class="stat-value">${stock.length}</div><div class="stat-label">Active Lines</div></div></div>
+      <div class="stat-card"><div class="stat-icon ${lowItems.length>0?'red':'green'}">⚠️</div><div><div class="stat-value">${lowItems.length}</div><div class="stat-label">Low Stock</div></div></div>
+      <div class="stat-card"><div class="stat-icon ${expiringItems.length>0?'amber':'green'}">🕐</div><div><div class="stat-value">${expiringItems.length}</div><div class="stat-label">Expiring Soon</div></div></div>
+      <div class="stat-card"><div class="stat-icon ${expiredItems.length>0?'red':'green'}">🚫</div><div><div class="stat-value">${expiredItems.length}</div><div class="stat-label">Expired</div></div></div>
+      <div class="stat-card"><div class="stat-icon slate">🗄️</div><div><div class="stat-value">${archived.length}</div><div class="stat-label">Archived</div></div></div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab-btn ${tab==='active'?'active':''}" onclick="window._whtab='active';renderPage()">📦 Active (${stock.length})</button>
+      <button class="tab-btn ${tab==='archived'?'active':''}" onclick="window._whtab='archived';renderPage()">🗄️ Archived (${archived.length})</button>
+    </div>
+
+    ${tab==='active'?`
+    <div class="card mb-12">
+      <div class="card-body" style="padding:10px 16px">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+          <input type="text" id="stock-search" class="form-control" style="width:200px" placeholder="Search commodity…" oninput="renderTable()">
+          <select id="cat-filter" class="form-control" style="width:140px" onchange="renderTable()">
+            <option value="">All Categories</option><option value="Medical">Medical</option><option value="Non-Medical">Non-Medical</option>
+          </select>
+          <select id="status-filter" class="form-control" style="width:140px" onchange="renderTable()">
+            <option value="">All Status</option><option value="low">Low Stock</option><option value="expiring">Expiring</option><option value="expired">Expired</option><option value="ok">OK</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="card"><div class="table-wrapper">
+      <table><thead><tr>
+        <th>Commodity</th><th>Category</th><th>Batch No.</th><th>Quantity</th><th>Unit</th>
+        <th>Date Added</th><th>Added By</th><th>Expiry Date</th><th>Stock Level</th><th>Status</th>
+        ${isManager?'<th>Actions</th>':''}
+      </tr></thead>
+      <tbody id="stock-tbody">${renderStockRows(stock)}</tbody></table>
+    </div></div>` : `
+    <div class="card">
+      <div class="card-header">
+        <div><div class="card-title">🗄️ Archived / Expired Stock</div></div>
+        <button class="btn btn-outline btn-sm" onclick="downloadArchive()">⬇ Download</button>
+      </div>
+      <div class="table-wrapper"><table>
+        <thead><tr><th>Commodity</th><th>Batch</th><th>Qty at Archive</th><th>Unit</th><th>Expiry Date</th><th>Archived On</th><th>Archived By</th><th>Reason</th></tr></thead>
+        <tbody>
+          ${archived.length===0?`<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🗄️</div><div class="empty-title">No archived items</div></div></td></tr>`:
+            archived.sort((a,b)=>new Date(b.archivedAt)-new Date(a.archivedAt)).map(a=>{
+              const com=DB.getOne('commodities',a.commodityId);
+              return `<tr class="archived-row">
+                <td class="fw-600 text-sm">${DB.getCommodityName(a.commodityId)}</td>
+                <td class="td-mono text-sm">${a.batchNo||'—'}</td>
+                <td class="fw-600">${a.quantity}</td>
+                <td class="text-muted text-sm">${com?.unit||'—'}</td>
+                <td class="text-sm text-danger">${a.expiryDate?fmtDate(a.expiryDate):'—'}</td>
+                <td class="text-sm text-muted">${fmtDate(a.archivedAt)}</td>
+                <td class="text-sm">${DB.getUserName(a.archivedBy)}</td>
+                <td class="text-sm text-muted">${a.reason||'Expired'}</td>
+              </tr>`;
+            }).join('')}
+        </tbody>
+      </table></div>
+    </div>`}
+
+    <!-- First Load Modal -->
+    <div class="modal-overlay" id="modal-firstload">
+      <div class="modal modal-xl">
+        <div class="modal-header"><span class="modal-title">📦 First Load — Warehouse Baseline</span>
+          <button class="modal-close" onclick="UI.closeModal('modal-firstload')">✕</button></div>
+        <div class="modal-body">
+          <div class="alert alert-info"><span class="alert-icon">ℹ️</span>
+            <div>Enter current quantities for all available commodities. This baseline will be sent to your line manager for approval before stock becomes active.</div></div>
+          <div class="table-wrapper">
+            <table><thead><tr><th>Commodity</th><th>Category</th><th>Unit</th><th>Quantity</th><th>Batch Number</th><th>Expiry Date</th></tr></thead>
+            <tbody>
+              ${commodities.map(c=>`<tr data-commodity="${c.id}">
+                <td class="fw-600 text-sm">${c.name}</td>
+                <td><span class="badge ${c.category==='Medical'?'badge-blue':'badge-slate'}">${c.category}</span></td>
+                <td class="text-sm text-muted">${c.unit}</td>
+                <td><input type="number" class="form-control fl-qty" min="0" value="0" style="width:90px" data-commodity="${c.id}"></td>
+                <td><input type="text" class="form-control fl-batch" placeholder="e.g. BT-2024-001" style="width:140px" data-commodity="${c.id}"></td>
+                <td><input type="date" class="form-control fl-expiry" data-commodity="${c.id}"></td>
+              </tr>`).join('')}
+            </tbody></table>
+          </div>
+          <div class="form-group mt-16 mb-0">
+            <label class="form-label">Note / Source of Stock</label>
+            <input type="text" id="fl-note" class="form-control" placeholder="e.g. Initial stock received from district">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="UI.closeModal('modal-firstload')">Cancel</button>
+          <button class="btn btn-primary" onclick="submitFirstLoad()">📤 Submit for Baseline Approval</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add Stock Modal -->
+    ${isManager?`
+    <div class="modal-overlay" id="modal-add-stock">
+      <div class="modal modal-lg">
+        <div class="modal-header"><span class="modal-title">+ Add Stock to Warehouse</span>
+          <button class="modal-close" onclick="UI.closeModal('modal-add-stock')">✕</button></div>
+        <div class="modal-body">
+          <div class="form-row cols-2">
+            <div class="form-group">
+              <label class="form-label">Commodity <span class="required">*</span></label>
+              <select id="add-commodity" class="form-control" onchange="autoFill()">
+                <option value="">— Select —</option>
+                ${commodities.map(c=>`<option value="${c.id}" data-unit="${c.unit}" data-thresh="${c.minThreshold||0}">${c.name} (${c.unit})</option>`).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Unit of Measure</label>
+              <input type="text" id="add-unit" class="form-control" readonly style="background:var(--slate-50)">
+            </div>
+          </div>
+          <div class="form-row cols-2">
+            <div class="form-group">
+              <label class="form-label">Quantity to Add <span class="required">*</span></label>
+              <input type="number" id="add-qty" class="form-control" min="1" placeholder="0">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Min. Threshold</label>
+              <input type="number" id="add-threshold" class="form-control" readonly style="background:var(--slate-50)">
+            </div>
+          </div>
+          <div class="form-row cols-2">
+            <div class="form-group">
+              <label class="form-label">Batch Number</label>
+              <input type="text" id="add-batch" class="form-control" placeholder="e.g. BT-2024-001">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Expiry Date</label>
+              <input type="date" id="add-expiry" class="form-control">
+            </div>
+          </div>
+          <div class="form-row cols-2">
+            <div class="form-group">
+              <label class="form-label">Date Added</label>
+              <input class="form-control" readonly style="background:var(--slate-50)" value="${new Date().toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'})}">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Added By</label>
+              <input class="form-control" readonly style="background:var(--slate-50)" value="${esc(user.name)}">
+            </div>
+          </div>
+          <div class="form-group mb-0">
+            <label class="form-label">Notes / Source</label>
+            <input type="text" id="add-note" class="form-control" placeholder="e.g. Received from national supply, GRN#...">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="UI.closeModal('modal-add-stock')">Cancel</button>
+          <button class="btn btn-primary" onclick="addStock()">Add to Warehouse</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Adjust Modal -->
+    <div class="modal-overlay" id="modal-adjust">
+      <div class="modal">
+        <div class="modal-header"><span class="modal-title">📝 Adjust Stock</span>
+          <button class="modal-close" onclick="UI.closeModal('modal-adjust')">✕</button></div>
+        <div class="modal-body">
+          <div class="alert alert-warning"><span class="alert-icon">⚠️</span><div>Adjustments are logged for audit. Provide a clear reason.</div></div>
+          <input type="hidden" id="adjust-id">
+          <div class="form-row cols-2">
+            <div class="form-group"><label class="form-label">Type</label>
+              <select id="adjust-type" class="form-control"><option value="add">Add quantity</option><option value="subtract">Remove (damaged/lost)</option></select></div>
+            <div class="form-group"><label class="form-label">Quantity <span class="required">*</span></label>
+              <input type="number" id="adjust-qty" class="form-control" min="1" placeholder="0"></div>
+          </div>
+          <div class="form-group mb-0"><label class="form-label">Reason <span class="required">*</span></label>
+            <textarea id="adjust-reason" class="form-control" rows="2" placeholder="Explain the reason…"></textarea></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="UI.closeModal('modal-adjust')">Cancel</button>
+          <button class="btn btn-primary" onclick="adjustStock()">Apply Adjustment</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Archive Modal -->
+    <div class="modal-overlay" id="modal-archive">
+      <div class="modal">
+        <div class="modal-header"><span class="modal-title">🗄️ Archive Item</span>
+          <button class="modal-close" onclick="UI.closeModal('modal-archive')">✕</button></div>
+        <div class="modal-body">
+          <div class="alert alert-warning"><span class="alert-icon">⚠️</span><div>Archiving removes this item from active stock permanently.</div></div>
+          <input type="hidden" id="archive-id">
+          <div class="form-group mb-0"><label class="form-label">Reason</label>
+            <select id="archive-reason" class="form-control">
+              <option value="Expired">Expired</option><option value="Damaged">Damaged</option>
+              <option value="Lost">Lost / Missing</option><option value="Recall">Product Recall</option><option value="Other">Other</option>
+            </select></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="UI.closeModal('modal-archive')">Cancel</button>
+          <button class="btn btn-danger" onclick="confirmArchive()">🗄️ Archive</button>
+        </div>
+      </div>
+    </div>` : ''}
+  `);
+}
+
+function renderStockRows(stock) {
+  const today=new Date(), in30=new Date(today.getTime()+30*24*60*60*1000);
+  const q   = document.getElementById('stock-search')?.value?.toLowerCase()||'';
+  const cat = document.getElementById('cat-filter')?.value||'';
+  const stf = document.getElementById('status-filter')?.value||'';
+  const isManager=['district','province','hq','admin'].includes(role);
+
+  const filtered = stock.filter(s=>{
+    const com=DB.getOne('commodities',s.commodityId);
+    const isLow=com&&s.quantity<com.minThreshold;
+    const expDate=s.expiryDate?new Date(s.expiryDate):null;
+    const isExp=expDate&&expDate<=in30&&expDate>=today;
+    const isExpired=expDate&&expDate<today;
+    if(q&&!DB.getCommodityName(s.commodityId).toLowerCase().includes(q))return false;
+    if(cat&&com?.category!==cat)return false;
+    if(stf==='low'&&!isLow)return false;
+    if(stf==='expiring'&&!isExp)return false;
+    if(stf==='expired'&&!isExpired)return false;
+    if(stf==='ok'&&(isLow||isExp||isExpired))return false;
+    return true;
+  });
+
+  if(!filtered.length) return `<tr><td colspan="11"><div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No items</div></div></td></tr>`;
+
+  return filtered.map(s=>{
+    const com=DB.getOne('commodities',s.commodityId);
+    const isLow=com&&s.quantity<com.minThreshold;
+    const expDate=s.expiryDate?new Date(s.expiryDate):null;
+    const isExp=expDate&&expDate<=in30&&expDate>=today;
+    const isExpired=expDate&&expDate<today;
+    const badge=isExpired?'<span class="badge badge-red">🚫 Expired</span>':isLow?'<span class="badge badge-red">⚠️ Low</span>':isExp?'<span class="badge badge-amber">🕐 Expiring</span>':'<span class="badge badge-green">✓ OK</span>';
+    const isManager=['district','province','hq','admin'].includes(role);
+    return `<tr>
+      <td><div class="fw-600 text-sm">${DB.getCommodityName(s.commodityId)}</div>${com?.description?`<div class="text-xs text-muted">${com.description}</div>`:''}</td>
+      <td><span class="badge ${com?.category==='Medical'?'badge-blue':'badge-slate'}">${com?.category||'—'}</span></td>
+      <td class="td-mono text-sm text-muted">${s.batchNo||'—'}</td>
+      <td><span class="fw-700 ${isExpired?'text-muted':isLow?'text-danger':'text-success'}">${s.quantity.toLocaleString()}</span></td>
+      <td class="text-sm text-muted">${com?.unit||'—'}</td>
+      <td class="text-sm text-muted">${s.addedAt?fmtDate(s.addedAt):'—'}</td>
+      <td class="text-sm text-muted">${s.addedBy?DB.getUserName(s.addedBy):'—'}</td>
+      <td class="text-sm ${isExpired?'text-danger fw-600':isExp?'':''}">${s.expiryDate?fmtDate(s.expiryDate):'—'}</td>
+      <td style="min-width:120px">${UI.stockBar(s.quantity,com?.minThreshold||0)}</td>
+      <td>${badge}</td>
+      ${isManager?`<td><div style="display:flex;gap:4px"><button class="btn btn-ghost btn-sm" onclick="openAdjust('${s.id}')">📝</button>${isExpired?`<button class="btn btn-danger btn-sm" onclick="openArchive('${s.id}')">🗄️</button>`:''}</div></td>`:''}
+    </tr>`;
+  }).join('');
+}
+
+function renderTable() {
+  document.getElementById('stock-tbody').innerHTML = renderStockRows(getStock());
+}
+
+function openFirstLoad() { UI.openModal('modal-firstload'); }
+
+function submitFirstLoad() {
+  const rows    = document.querySelectorAll('#modal-firstload tbody tr');
+  const items   = [];
+  rows.forEach(row=>{
+    const comId = row.dataset.commodity;
+    const qty   = parseInt(row.querySelector('.fl-qty').value)||0;
+    const batch = row.querySelector('.fl-batch').value.trim();
+    const expiry= row.querySelector('.fl-expiry').value;
+    if(qty>0) items.push({ commodityId:comId, quantity:qty, batchNo:batch||'N/A', expiryDate:expiry||null });
+  });
+  if(!items.length){ UI.toast('Enter at least one quantity.','error'); return; }
+  const note = document.getElementById('fl-note').value.trim();
+
+  // Store as pending baseline
+  const baselines = DB.get('warehouseBaselines')||[];
+  const existing  = baselines.findIndex(b=>b.warehouseType===wh.type&&b.warehouseId===wh.id&&b.status==='pending');
+  const bl = { id:DB.genId('bl'), warehouseType:wh.type, warehouseId:wh.id,
+    submittedBy:user.id, submittedAt:new Date().toISOString(),
+    status:'pending', items, note, approvedBy:null, approvedAt:null };
+  if(existing>=0) baselines[existing]=bl; else baselines.push(bl);
+  DB.save('warehouseBaselines', baselines);
+
+  UI.closeModal('modal-firstload');
+  UI.toast('Baseline submitted for line manager approval. Stock will activate once approved.','success',5000);
+  renderPage();
+}
+
+function autoFill() {
+  const sel=document.getElementById('add-commodity');
+  const opt=sel.options[sel.selectedIndex];
+  document.getElementById('add-unit').value      = opt?.dataset?.unit||'';
+  document.getElementById('add-threshold').value = opt?.dataset?.thresh||'';
+}
+
+function addStock() {
+  const comId  = document.getElementById('add-commodity').value;
+  const qty    = parseInt(document.getElementById('add-qty').value)||0;
+  const batch  = document.getElementById('add-batch').value.trim();
+  const expiry = document.getElementById('add-expiry').value;
+  const note   = document.getElementById('add-note').value.trim();
+  if(!comId){ UI.toast('Select a commodity.','error'); return; }
+  if(qty<=0){ UI.toast('Quantity must be > 0.','error'); return; }
+  if(wh.type==='facility'){ UI.toast('Facility stock is only updated through confirmed deliveries.','error'); return; }
+  const existing=DB.get('warehouseStock').find(w=>w.warehouseType===wh.type&&w.warehouseId===wh.id&&w.commodityId===comId&&w.batchNo===(batch||'N/A'));
+  if(existing){ DB.update('warehouseStock',existing.id,{quantity:existing.quantity+qty}); UI.toast('Added to existing batch.','success'); }
+  else {
+    DB.add('warehouseStock',{ id:DB.genId('ws'), warehouseType:wh.type, warehouseId:wh.id,
+      commodityId:comId, batchNo:batch||'N/A', quantity:qty, expiryDate:expiry||null,
+      addedBy:user.id, addedAt:new Date().toISOString(), note });
+    UI.toast('Stock added.','success');
+  }
+  DB.add('stockMovements',{ id:DB.genId('mv'), type:'added', toType:wh.type, toId:wh.id,
+    commodityId:comId, quantity:qty, batchNo:batch, date:new Date().toISOString(), doneBy:user.id, note });
+  UI.closeModal('modal-add-stock');
+  renderPage();
+}
+
+function openAdjust(id){ document.getElementById('adjust-id').value=id; document.getElementById('adjust-qty').value=''; document.getElementById('adjust-reason').value=''; UI.openModal('modal-adjust'); }
+function adjustStock(){
+  const id=document.getElementById('adjust-id').value;
+  const type=document.getElementById('adjust-type').value;
+  const qty=parseInt(document.getElementById('adjust-qty').value)||0;
+  const reason=document.getElementById('adjust-reason').value.trim();
+  if(qty<=0){ UI.toast('Quantity must be > 0.','error'); return; }
+  if(!reason){ UI.toast('Reason is required.','error'); return; }
+  const item=DB.get('warehouseStock').find(w=>w.id===id);
+  if(!item) return;
+  const newQty=type==='add'?item.quantity+qty:item.quantity-qty;
+  if(newQty<0){ UI.toast('Cannot result in negative stock.','error'); return; }
+  DB.update('warehouseStock',id,{quantity:newQty});
+  DB.add('auditLog',{ id:DB.genId('log'), action:'stock_adjustment', userId:user.id,
+    details:`${type==='add'?'+':'-'}${qty} on ${DB.getCommodityName(item.commodityId)}: ${reason}`, timestamp:new Date().toISOString() });
+  UI.closeModal('modal-adjust'); UI.toast('Stock adjusted.','success'); renderPage();
+}
+
+function openArchive(id){ document.getElementById('archive-id').value=id; UI.openModal('modal-archive'); }
+function confirmArchive(){
+  const id=document.getElementById('archive-id').value;
+  const reason=document.getElementById('archive-reason').value;
+  const item=DB.get('warehouseStock').find(w=>w.id===id)||DB.get('facilityStock').find(s=>s.id===id);
+  if(!item) return;
+  DB.add('archivedStock',{ id:DB.genId('arch'), warehouseType:wh.type, warehouseId:wh.id,
+    commodityId:item.commodityId, batchNo:item.batchNo||'—',
+    quantity:item.quantity||item.closingBalance||0, expiryDate:item.expiryDate||null,
+    archivedBy:user.id, archivedAt:new Date().toISOString(), reason });
+  if(wh.type==='facility') DB.remove('facilityStock',id); else DB.remove('warehouseStock',id);
+  UI.closeModal('modal-archive'); UI.toast('Item archived.','success'); renderPage();
+}
+
+function archiveAllExpired(){
+  if(!confirm('Archive ALL expired items?')) return;
+  const stock=getStock(); let count=0;
+  stock.filter(s=>s.expiryDate&&new Date(s.expiryDate)<new Date()).forEach(s=>{
+    DB.add('archivedStock',{ id:DB.genId('arch'), warehouseType:wh.type, warehouseId:wh.id,
+      commodityId:s.commodityId, batchNo:s.batchNo||'—', quantity:s.quantity||s.closingBalance||0,
+      expiryDate:s.expiryDate, archivedBy:user.id, archivedAt:new Date().toISOString(), reason:'Expired' });
+    if(wh.type==='facility') DB.remove('facilityStock',s.id); else DB.remove('warehouseStock',s.id);
+    count++;
+  });
+  UI.toast(`${count} expired item${count>1?'s':''} archived.`,'success'); renderPage();
+}
+
+function downloadArchive(){
+  const arch=DB.get('archivedStock').filter(a=>a.warehouseType===wh.type&&a.warehouseId===wh.id);
+  const h=['Commodity','Batch','Qty','Unit','Expiry','Archived On','By','Reason'];
+  const rows=arch.map(a=>{const com=DB.getOne('commodities',a.commodityId);return[DB.getCommodityName(a.commodityId),a.batchNo||'',a.quantity,com?.unit||'',a.expiryDate?fmtDate(a.expiryDate):'',fmtDate(a.archivedAt),DB.getUserName(a.archivedBy),a.reason||''].map(v=>`"${v}"`).join(',');});
+  const csv=[h.join(','),...rows].join('\n');
+  const blob=new Blob([csv],{type:'text/csv'}); const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download=`Archive_${wh.label.replace(/ /g,'_')}.csv`; a.click();
+  UI.toast('Archive downloaded.','success');
+}
+
+function fmtDate(iso){ return iso?new Date(iso).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}):'—'; }
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+renderPage();
+</script>
+</body>
+</html>
