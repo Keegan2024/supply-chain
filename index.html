@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>Scheduled maintenance</title>
+<style>
+  :root {
+    --ink: #0f2233;
+    --body: #46586a;
+    --muted: #7a8794;
+    --line: #dde4ea;
+    --bg: #d6e6f5;
+    --card: #ffffff;
+    --accent: #0b6e8a;
+    --accent-soft: #e3f1f5;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { height: 100%; }
+  body {
+    min-height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    padding: 32px 20px;
+    background: var(--bg);
+    color: var(--body);
+    font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .card {
+    width: 100%;
+    max-width: 620px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 1px 2px rgba(15, 34, 51, .04), 0 18px 40px -18px rgba(15, 34, 51, .18);
+  }
+  .bar {
+    position: relative;
+    height: 4px;
+    background: var(--accent-soft);
+    overflow: hidden;
+  }
+  .bar::after {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 35%;
+    background: var(--accent);
+    animation: slide 2.4s ease-in-out infinite;
+  }
+  @keyframes slide {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(300%); }
+  }
+  .content { padding: 48px 48px 40px; }
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 14px 7px 12px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-radius: 999px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .status svg { width: 18px; height: 18px; }
+  h1 {
+    margin-top: 28px;
+    font-size: clamp(28px, 5vw, 38px);
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    font-weight: 700;
+    color: var(--ink);
+    max-width: 18ch;
+  }
+  .lead {
+    margin-top: 18px;
+    font-size: 17px;
+    line-height: 1.65;
+    max-width: 52ch;
+  }
+  .update {
+    margin-top: 32px;
+    padding: 18px 20px;
+    border-left: 3px solid var(--accent);
+    background: #f6f9fb;
+    border-radius: 0 8px 8px 0;
+    font-size: 15px;
+    line-height: 1.6;
+    color: var(--ink);
+  }
+  .foot {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px 24px;
+    padding: 20px 48px;
+    border-top: 1px solid var(--line);
+    font-size: 14px;
+    color: var(--muted);
+  }
+  .foot a { color: var(--accent); text-decoration: none; font-weight: 600; }
+  .foot a:hover { text-decoration: underline; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+  .legal { font-size: 13px; color: var(--muted); }
+  @media (max-width: 520px) {
+    .content { padding: 36px 24px 28px; }
+    .foot { padding: 18px 24px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .bar::after { animation: none; width: 100%; opacity: .5; }
+  }
+</style>
+</head>
+<body>
+
+  <main class="card">
+    <div class="bar" role="presentation"></div>
+
+    <div class="content">
+      <div class="status">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/>
+        </svg>
+        Maintenance in progress
+      </div>
+
+      <h1>We’re making improvements to our website</h1>
+
+      <p class="lead">
+        The site is temporarily unavailable while we deploy an update.
+        If you were looking for a specific page, it will be back once
+        the work is complete.
+      </p>
+
+      <div class="update">
+        We’ll notify you as soon as the deployment is finished and the
+        website is fully available again.
+      </div>
+    </div>
+
+    <div class="foot">
+      <span>Questions? <a href="mailto:keegan.m.yandwa@gmail.com">keegan.m.yandwa@gmail.com</a></span>
+      <span>Thank you for your patience.</span>
+    </div>
+  </main>
+
+  <p class="legal">&copy; The Realword Enterprise</p>
+
+</body>
+</html>
