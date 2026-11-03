@@ -19,7 +19,7 @@ const DB = {
       {
         id: 'usr_admin_01',
         name: 'System Administrator',
-        email: 'Keega@gmail.com',
+        email: 'Keega.m.yandwa@gmail.com',
         password: 'Job1@hon',
         role: 'admin',
         status: 'active',
